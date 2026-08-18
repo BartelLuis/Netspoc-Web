@@ -71,6 +71,7 @@ setup. The container serves both the web assets and the Go API on port 8080.
    chmod 600 .env
    $EDITOR .env
    ```
+   in a local `.env` file. This file must not be committed.
 4. Start the service:
 
    ```sh
