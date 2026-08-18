@@ -15,6 +15,16 @@ RUN apk add --no-cache ca-certificates tzdata \
 COPY --from=builder /out/policyweb /usr/local/bin/policyweb
 COPY --from=builder /out/policyweb-create-user /usr/local/bin/policyweb-create-user
 RUN test -x /usr/local/bin/policyweb -a -x /usr/local/bin/policyweb-create-user
+COPY --chown=policyweb:policyweb app /srv/policyweb/app
+COPY --chown=policyweb:policyweb htdocs/extjs4 /srv/policyweb/extjs4
+COPY --chown=policyweb:policyweb htdocs/silk-icons /srv/policyweb/silk-icons
+COPY --chown=policyweb:policyweb resources /srv/policyweb/resources
+COPY --chown=policyweb:policyweb go/pkg/backend/mail-templates /srv/policyweb/templates/mail
+COPY --chown=policyweb:policyweb go/pkg/backend/html-templates /srv/policyweb/templates/html
+COPY --chown=policyweb:policyweb app.html index.html ldap-login.html passwd.html /srv/policyweb/
+RUN test -f /srv/policyweb/app.html \
+    -a -f /srv/policyweb/extjs4/ext-all.js \
+    -a -f /srv/policyweb/app/Application.js
 COPY --chown=policyweb:policyweb app app
 COPY --chown=policyweb:policyweb htdocs htdocs
 COPY --chown=policyweb:policyweb resources resources

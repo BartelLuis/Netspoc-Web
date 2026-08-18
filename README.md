@@ -84,6 +84,21 @@ Netspoc export mount, a non-root user and a container health check. For a privat
 Fortinet CA, mount the PEM file read-only and point `ca_file` at its in-container
 path.
 
+If `app.html` shows only a blank page, recreate the container from the current
+image and verify that the Ext JS assets are served from the expected root path:
+
+```sh
+docker compose up -d --build --force-recreate policyweb
+curl --fail http://localhost:${POLICYWEB_PORT:-8080}/extjs4/ext-all.js \
+  --output /dev/null
+curl --fail http://localhost:${POLICYWEB_PORT:-8080}/app/Application.js \
+  --output /dev/null
+```
+
+The HTML body is intentionally populated by Ext JS at runtime. While JavaScript
+loads, it now displays a loading message; with JavaScript disabled it displays a
+clear diagnostic instead of an empty document.
+
 The image can also be run without Compose. Mount the configuration and Netspoc
 export at the paths used in `docker/policyweb.conf`; `POLICYWEB_CONFIG` can be
 set to select a different configuration file.
