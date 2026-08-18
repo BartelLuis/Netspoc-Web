@@ -1,0 +1,28 @@
+services:
+  policyweb:
+    build: .
+    image: netspoc-web:local
+    restart: unless-stopped
+    ports:
+      - "${POLICYWEB_PORT:-8080}:8080"
+    environment:
+      # Add the environment variables referenced by token_env, username_env and
+      # password_env in docker/policyweb.conf here or in a local .env file.
+      TZ: "${TZ:-UTC}"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./docker/policyweb.conf:/etc/policyweb/policyweb.conf:ro
+      - ${NETSPOC_DATA:-./docker/netspoc-data}:/var/lib/policyweb/netspoc:ro
+      - policyweb-sessions:/var/lib/policyweb/sessions
+      - policyweb-users:/var/lib/policyweb/users
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  policyweb-sessions:
+  policyweb-users:

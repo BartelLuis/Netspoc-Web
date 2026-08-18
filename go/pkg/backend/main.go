@@ -34,6 +34,14 @@ func getMux() (*http.ServeMux, *state) {
 	noLoginMux.HandleFunc("/get_policy", s.getPolicy)
 	noLoginMux.HandleFunc("/register", s.register)
 	noLoginMux.HandleFunc("/verify", s.verify)
+	noLoginMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(jsonMap{"status": "ok"})
+	})
 
 	needsLoginMux := http.NewServeMux()
 	needsLoginMux.HandleFunc("/get_diff", s.getDiff)

@@ -46,6 +46,33 @@ provides visibility and connectivity health. Configuration import, semantic
 policy comparison, installation and rollback must be implemented in the Netspoc
 compiler/deployment workflow rather than in this read-oriented web frontend.
 
+Docker
+------
+
+The repository contains a multi-stage, non-root production image and a Compose
+setup. The container serves both the web assets and the Go API on port 8080.
+
+1. Put an exported Netspoc policy below `docker/netspoc-data`, or set
+   `NETSPOC_DATA` to its host path.
+2. Adjust `docker/policyweb.conf`. Add Fortinet targets as shown above.
+3. Put the secret environment variables referenced by the target configuration
+   in a local `.env` file. This file must not be committed.
+4. Start the service:
+
+   ```sh
+   docker compose up --build -d
+   ```
+
+Open `http://localhost:8080` (or set `POLICYWEB_PORT`). Compose uses a read-only
+root filesystem, persistent named volumes for sessions and users, a read-only
+Netspoc export mount, a non-root user and a container health check. For a private
+Fortinet CA, mount the PEM file read-only and point `ca_file` at its in-container
+path.
+
+The image can also be run without Compose. Mount the configuration and Netspoc
+export at the paths used in `docker/policyweb.conf`; `POLICYWEB_CONFIG` can be
+set to select a different configuration file.
+
 <span>
 	Test run with
 	<a href="https://www.browserstack.com/">

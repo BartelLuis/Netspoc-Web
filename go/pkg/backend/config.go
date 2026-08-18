@@ -88,7 +88,9 @@ type config struct {
 func LoadConfig() *config {
 	home, _ := os.UserHomeDir()
 	var p string
-	if os.Getenv("PW_FRONTEND_TEST") != "" {
+	if configured := os.Getenv("POLICYWEB_CONFIG"); configured != "" {
+		p = configured
+	} else if os.Getenv("PW_FRONTEND_TEST") != "" {
 		p = filepath.Join(home, "policyweb-test.conf")
 	} else {
 		p = filepath.Join(home, "policyweb.conf")
