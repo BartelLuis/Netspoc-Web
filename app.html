@@ -1,14 +1,12 @@
 <!doctype html>
 <html lang="de">
 	<head>
+	<meta charset="UTF-8">
 	  <title>
 		Policy-Web -- Web-Interface für den
 		Network Security Policy Compiler von Dataport
 	  </title>
 	<link rel="icon" type="image/vnd.microsoft.icon" href="resources/images/policyweb.ico">
-	</head>
-
-
 	<!-- Cascading style sheets -->
 	<link rel="stylesheet" type="text/css" href="/extjs4/resources/css/ext-all.css" />
 
@@ -41,7 +39,18 @@
 	<script type="text/javascript" src="app/common.js">              </script> 
 	<script type="text/javascript" src="app/Appstate.js">            </script> 
 	<script type="text/javascript" src="app/Application.js">         </script>
+	<style>
+	  #application-loading {
+	    box-sizing: border-box;
+	    font: 16px sans-serif;
+	    padding: 2rem;
+	    text-align: center;
+	  }
+	</style>
+	</head>
 
 	<body>
+	  <div id="application-loading" role="status">Policy-Web wird geladen …</div>
+	  <noscript>Policy-Web benötigt aktiviertes JavaScript.</noscript>
 	</body>
 </html>

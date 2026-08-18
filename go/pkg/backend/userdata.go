@@ -9,9 +9,38 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/mail"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// SetUserPassword creates or updates a local user account. It is shared by the
+// web registration flow and the container administration command.
+func SetUserPassword(userDir, email, password string) error {
+	email = strings.ToLower(filepath.Clean(strings.TrimSpace(email)))
+	address, err := mail.ParseAddress(email)
+	if err != nil || address.Address != email || filepath.Base(email) != email || email == "guest" {
+		return fmt.Errorf("invalid user email %q", email)
+	}
+	if password == "" {
+		return fmt.Errorf("password must not be empty")
+	}
+	hash, err := (SSHAEncoder{}).EncodeAsString([]byte(password))
+	if err != nil {
+		return err
+	}
+	userFile := filepath.Join(userDir, email)
+	store, err := GetUserStore(userFile)
+	if err != nil {
+		return err
+	}
+	store.Hash = hash
+	if err := store.WriteToFile(userFile); err != nil {
+		return err
+	}
+	return os.Chmod(userFile, 0600)
+}
 
 type UserStore struct {
 	Hash     string   `json:"hash"`
