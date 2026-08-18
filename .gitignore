@@ -3,6 +3,7 @@ policyweb-*
 .prove
 .vscode
 *~
+.env
 go/cmd/*/*
 !go/cmd/*/*.go
 !go/cmd/*/testdata
