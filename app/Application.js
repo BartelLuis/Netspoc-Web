@@ -175,6 +175,10 @@ Ext.application(
         },
 
         launch: function () {
+			var loading = document.getElementById('application-loading');
+			if (loading) {
+				loading.parentNode.removeChild(loading);
+			}
 
             Ext.Ajax.on('requestexception', this.onJsonException);
 
@@ -246,4 +250,3 @@ Ext.application(
         }
     }
 );
-
