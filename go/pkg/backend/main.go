@@ -55,6 +55,7 @@ func getMux() (*http.ServeMux, *state) {
 	needsLoginMux.HandleFunc("/logout", s.logoutHandler)
 	needsLoginMux.HandleFunc("/service_list", s.serviceList)
 	needsLoginMux.HandleFunc("/set", s.setSessionData)
+	needsLoginMux.HandleFunc("/fortinet/status", s.getFortinetStatus)
 
 	defaultMux := http.NewServeMux()
 	defaultMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
