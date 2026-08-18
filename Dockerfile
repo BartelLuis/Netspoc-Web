@@ -25,13 +25,6 @@ COPY --chown=policyweb:policyweb app.html index.html ldap-login.html passwd.html
 RUN test -f /srv/policyweb/app.html \
     -a -f /srv/policyweb/extjs4/ext-all.js \
     -a -f /srv/policyweb/app/Application.js
-COPY --chown=policyweb:policyweb app app
-COPY --chown=policyweb:policyweb htdocs htdocs
-COPY --chown=policyweb:policyweb resources resources
-COPY --chown=policyweb:policyweb go/pkg/backend/mail-templates /srv/policyweb/templates/mail
-COPY --chown=policyweb:policyweb go/pkg/backend/html-templates /srv/policyweb/templates/html
-COPY --chown=policyweb:policyweb app.html index.html ldap-login.html passwd.html /srv/policyweb/
-RUN mv app htdocs resources /srv/policyweb/
 
 USER policyweb
 ENV LISTENADDRESS=0.0.0.0 \
