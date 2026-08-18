@@ -71,6 +71,7 @@ setup. The container serves both the web assets and the Go API on port 8080.
    chmod 600 .env
    $EDITOR .env
    ```
+   in a local `.env` file. This file must not be committed.
 4. Start the service:
 
    ```sh
@@ -97,23 +98,6 @@ curl --fail http://localhost:${POLICYWEB_PORT:-8080}/app/Application.js \
 The HTML body is intentionally populated by Ext JS at runtime. While JavaScript
 loads, it now displays a loading message; with JavaScript disabled it displays a
 clear diagnostic instead of an empty document.
-
-If a build fails at `RUN mv app htdocs resources /srv/policyweb/`, the checkout
-contains an obsolete Dockerfile. The current Dockerfile copies every asset
-directly to its final location and has no such `RUN mv` instruction. Update the
-checkout and validate the build context before rebuilding:
-
-```sh
-git pull --ff-only
-./docker/check-build-context.sh
-grep -n 'RUN mv app htdocs resources' Dockerfile && exit 1 || true
-docker compose build --no-cache --pull
-docker compose up -d --force-recreate
-```
-
-Do not solve this by creating temporary `app`, `htdocs`, or `resources`
-directories inside the image: that would restore the wrong `/htdocs/extjs4`
-URL layout and make the application page blank again.
 
 The image can also be run without Compose. Mount the configuration and Netspoc
 export at the paths used in `docker/policyweb.conf`; `POLICYWEB_CONFIG` can be
