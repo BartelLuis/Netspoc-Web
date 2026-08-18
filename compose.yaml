@@ -23,6 +23,17 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  create-user:
+    profiles: ["tools"]
+    build: .
+    image: netspoc-web:local
+    entrypoint: ["/usr/local/bin/policyweb-create-user"]
+    volumes:
+      - policyweb-users:/var/lib/policyweb/users
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   policyweb-sessions:
   policyweb-users:

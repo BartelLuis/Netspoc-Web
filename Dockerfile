@@ -5,6 +5,7 @@ COPY go/go.mod go/go.sum ./
 RUN go mod download
 COPY go/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/policyweb ./cmd/server
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/policyweb-create-user ./cmd/create-user
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates tzdata \
@@ -12,6 +13,8 @@ RUN apk add --no-cache ca-certificates tzdata \
     && adduser -S -G policyweb -h /var/lib/policyweb policyweb \
     && install -d -o policyweb -g policyweb /var/lib/policyweb/sessions /var/lib/policyweb/users /srv/policyweb
 COPY --from=builder /out/policyweb /usr/local/bin/policyweb
+COPY --from=builder /out/policyweb-create-user /usr/local/bin/policyweb-create-user
+RUN test -x /usr/local/bin/policyweb -a -x /usr/local/bin/policyweb-create-user
 COPY --chown=policyweb:policyweb app app
 COPY --chown=policyweb:policyweb htdocs htdocs
 COPY --chown=policyweb:policyweb resources resources

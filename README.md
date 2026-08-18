@@ -3,6 +3,13 @@ Netspoc-Web
 
 A multi user web frontend to view rules managed with Netspoc
 
+> **Architecture direction:** the target is native policy authoring,
+> compilation and Fortinet deployment without an external Netspoc runtime. The
+> safe migration plan, data model and cutover gates are documented in
+> [`docs/NATIVE_POLICY_ENGINE.md`](docs/NATIVE_POLICY_ENGINE.md). The current
+> release still uses exported Netspoc policy data until the native engine reaches
+> semantic-equivalence and deployment-safety gates.
+
 FortiGate and FortiManager connectivity
 ---------------------------------------
 
@@ -56,6 +63,14 @@ setup. The container serves both the web assets and the Go API on port 8080.
    `NETSPOC_DATA` to its host path.
 2. Adjust `docker/policyweb.conf`. Add Fortinet targets as shown above.
 3. Put the secret environment variables referenced by the target configuration
+   in a local `.env` file. Start from the tracked example; `.env` itself is
+   ignored by Git and must not be committed:
+
+   ```sh
+   cp .env.example .env
+   chmod 600 .env
+   $EDITOR .env
+   ```
    in a local `.env` file. This file must not be committed.
 4. Start the service:
 
@@ -72,6 +87,174 @@ path.
 The image can also be run without Compose. Mount the configuration and Netspoc
 export at the paths used in `docker/policyweb.conf`; `POLICYWEB_CONFIG` can be
 set to select a different configuration file.
+
+### Environment file
+
+The included `.env.example` contains all variables used by the supplied Compose
+setup:
+
+```dotenv
+TZ=Europe/Berlin
+POLICYWEB_PORT=8080
+NETSPOC_DATA=./docker/netspoc-data
+EDGE_1_API_TOKEN=replace-with-fortigate-api-token
+FMG_API_USER=netspoc-web
+FMG_API_PASSWORD=replace-with-fortimanager-password
+```
+
+`POLICYWEB_PORT` and `NETSPOC_DATA` are consumed by Docker Compose for port and
+volume interpolation. `TZ` and the Fortinet credentials are passed into the
+container. Credential variable names are not fixed: they must exactly match the
+`token_env`, `username_env` and `password_env` values in
+`docker/policyweb.conf`. For the example above, that configuration contains:
+
+```json
+{
+  "fortinet_targets": [
+    {
+      "name": "edge-1",
+      "type": "fortigate",
+      "url": "https://edge-1.example.net",
+      "vdom": "root",
+      "token_env": "EDGE_1_API_TOKEN"
+    },
+    {
+      "name": "central-fmg",
+      "type": "fortimanager",
+      "url": "https://fmg.example.net",
+      "adom": "production",
+      "username_env": "FMG_API_USER",
+      "password_env": "FMG_API_PASSWORD"
+    }
+  ]
+}
+```
+
+Do not place `fortinet_targets` JSON in `.env`; it belongs in
+`docker/policyweb.conf`. Do not add spaces around `=`, and quote values only when
+needed. For production, prefer an orchestrator secret store over a long-lived
+`.env` file.
+
+### Creating local users
+
+Local users are stored on the `policyweb-users` volume. Create the first user or
+reset an existing user's password with the administration command included in
+the image. Reading the password from standard input keeps it out of the process
+list and Compose configuration. Use the dedicated one-shot Compose service; it
+works even when the web container is stopped and shares the same persistent
+user volume:
+
+```sh
+read -r -s -p 'Password: ' POLICYWEB_PASSWORD; echo
+printf '%s' "$POLICYWEB_PASSWORD" | docker compose run --rm -T create-user \
+  --email admin@example.net --password-stdin
+unset POLICYWEB_PASSWORD
+```
+
+The email address is the login name. The command rejects path-like or malformed
+addresses, stores only an SSHA-256 password hash, and writes the account file
+with mode `0600`. Re-running it for the same address resets that user's password.
+For LDAP installations, configure the existing `ldap_*` settings instead; LDAP
+users do not need a local password file.
+
+If Docker reports `policyweb-create-user: executable file not found`, the
+running container was created from an older image. Rebuild and recreate it, then
+verify the binary by its absolute path:
+
+```sh
+docker compose build --pull policyweb create-user
+docker compose up -d --force-recreate policyweb
+docker compose exec policyweb \
+  test -x /usr/local/bin/policyweb-create-user
+```
+
+After that, use the one-shot `docker compose run --rm -T create-user ...`
+command above. Do not use a bare `docker exec` against a container created from
+an old image; rebuilding an image does not automatically replace an already
+running container.
+
+### Assigning responsibilities and networks
+
+Creating a local user only creates login credentials. Authorization is not kept
+in a second Netspoc-Web database: owners, administrators and networks remain in
+the Netspoc policy, which is the source of truth. Assign the login email to an
+owner's `admins` attribute and assign networks to that owner, for example:
+
+**Do not add these declarations to `docker/policyweb.conf`.** That file configures
+the web service and Fortinet API targets only. Edit them in the policy source of
+your separate `BartelLuis/Netspoc` checkout—the same input directory in which
+you already define `owner:`, `network:`, `router:` and `service:` objects. The
+exact source filename is deployment-specific because Netspoc policies can be
+split across multiple files.
+
+```text
+owner:network-team = {
+  admins = admin@example.net;
+  watchers = noc@example.net;
+}
+
+network:branch-office = {
+  ip = 10.20.0.0/16;
+  owner = network-team;
+
+  host:router = { ip = 10.20.0.1; }
+}
+```
+
+The user `admin@example.net` can now select the responsibility
+`network-team`; its owned networks, objects and services are derived from the
+exported policy. Add the same email to multiple owners to grant multiple
+responsibilities. `[all]@example.net` in an owner role grants that role to every
+authenticated user whose resolved email belongs to that domain. `watchers`
+receive the owner-related notifications but do not replace `admins` for access.
+
+After changing the Netspoc source, compile/export it with Netspoc and replace or
+update the policy mounted at `/var/lib/policyweb/netspoc`. Its `current` symlink
+must point at the newly exported policy directory. Netspoc-Web reads the
+email-to-owner mapping and all network ownership from this export; restarting
+the container is the simplest way to discard already cached policy data:
+
+```sh
+docker compose restart policyweb
+```
+
+With the default Compose configuration, the host-side export directory is
+`./docker/netspoc-data`; setting `NETSPOC_DATA=/absolute/export/path` selects a
+different host directory. It must contain exported data rather than Netspoc
+source text. A typical layout is:
+
+```text
+Netspoc/                         # separate BartelLuis/Netspoc checkout
+└── policy/                      # example input directory; edit policy here
+    └── ...                      # owner/network/service source files
+
+Netspoc-Web/
+└── docker/netspoc-data/         # generated export; do not edit by hand
+    ├── current -> p2026-08-18
+    └── p2026-08-18/
+        ├── email
+        ├── objects
+        ├── services
+        └── owner/
+```
+
+For example, if your Netspoc installation provides `export-netspoc`, export to a
+new versioned directory and then atomically update `current`:
+
+```sh
+export-netspoc -q /absolute/path/to/Netspoc/policy \
+  "$PWD/docker/netspoc-data/p2026-08-18"
+ln -sfn p2026-08-18 docker/netspoc-data/current
+docker compose restart policyweb
+```
+
+Run those commands from the `Netspoc-Web` repository root and replace the input
+path and version name with your real paths. Never edit the generated `email`,
+`objects`, `services`, or `owner/` files directly; the next export overwrites
+them.
+
+This separation is intentional: `policyweb-create-user` manages authentication,
+whereas the Netspoc policy manages authorization and network responsibility.
 
 <span>
 	Test run with
