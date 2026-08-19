@@ -117,6 +117,37 @@ The image can also be run without Compose. Mount the configuration and Netspoc
 export at the paths used in `docker/policyweb.conf`; `POLICYWEB_CONFIG` can be
 set to select a different configuration file.
 
+### Mail configuration
+
+Mail is configured only in `docker/policyweb.conf` and the environment; there
+are no mail settings in the GUI. To use an authenticated SMTP submission
+server, set:
+
+```json
+{
+  "noreply_address": "policyweb@example.net",
+  "mail_transport": "smtp",
+  "smtp_host": "smtp.example.net",
+  "smtp_port": 587,
+  "smtp_username_env": "POLICYWEB_SMTP_USERNAME",
+  "smtp_password_env": "POLICYWEB_SMTP_PASSWORD"
+}
+```
+
+Put the referenced credentials in `.env`:
+
+```dotenv
+POLICYWEB_SMTP_USERNAME=policyweb
+POLICYWEB_SMTP_PASSWORD=replace-with-secret
+```
+
+The SMTP client uses STARTTLS when the server advertises it. For an internal
+relay without authentication, omit `smtp_username_env` and
+`smtp_password_env`. The legacy local MTA mode remains available with
+`"mail_transport": "sendmail"` and an optional `sendmail_command`; the supplied
+Alpine container does not install a local MTA, so SMTP is the normal container
+configuration.
+
 ### Environment file
 
 The included `.env.example` contains all variables used by the supplied Compose
@@ -183,8 +214,6 @@ unset POLICYWEB_PASSWORD
 The email address is the login name. The command rejects path-like or malformed
 addresses, stores only an SSHA-256 password hash, and writes the account file
 with mode `0600`. Re-running it for the same address resets that user's password.
-For LDAP installations, configure the existing `ldap_*` settings instead; LDAP
-users do not need a local password file.
 
 If Docker reports `policyweb-create-user: executable file not found`, the
 running container was created from an older image. Rebuild and recreate it, then

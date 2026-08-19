@@ -22,6 +22,8 @@
 
 		body {
 			font-family: sans-serif;
+			color: #263746;
+			background: #f5f8fb;
 		}
 
 		fieldset {
@@ -37,7 +39,7 @@
 			float: left;
 		}
 
-		#rechts {
+		#login-form {
 			float: right;
 		}
 
@@ -53,34 +55,24 @@
 		<h1>Policy-Web</h1>
 	</div>
 
-	<form action="backend6/login" method="post" id="rechts">
+	<form action="backend6/login" method="post" id="login-form">
 		<fieldset>
 			<legend class="small">Anmelden</legend>
 			<input name="app" type="hidden" value="../app.html" />
-			<label for="email">Email:
-				<input id=txtf_email name="email" type="text" size="30" /></label>
-			<label for="pass">Kennwort:
-				<input id=txtf_password name="pass" type="password" size="15" /></label>
-			<input id=btn_login type="submit" value="Login" />
-			<p>
-			<div id="rechts" class="small">
-				Neues <a href="passwd.html">Kennwort anfordern</a></div>
-			<div class="small">
-				Für Dataport Mitarbeiter<br>
-				<a href="ldap-login.html">Anmeldung über Verzeichnisdienst</a>
-			</div>
+			<label for="txtf_email">E-Mail:
+				<input id="txtf_email" name="email" type="email" size="30" autocomplete="username" required></label>
+			<label for="txtf_password">Kennwort:
+				<input id="txtf_password" name="pass" type="password" size="15" autocomplete="current-password" required></label>
+			<input id="btn_login" type="submit" value="Login">
+			<div class="small">Neues <a href="passwd.html">Kennwort anfordern</a></div>
 		</fieldset>
 	</form>
 
 	<p id="unten">
-		<a href="admin.html">Policy Administration</a>
+		<a href="start.html">Changelog</a>
 	</p>
 	<p>
-		<a href="start.html">Basisinformationen und Änderungen</a>
-	</p>
-	<p>
-		Hier finden Sie einen kurzen Überblick über Policy-Web und die zuletzt
-		bereitgestellten Funktionen.
+		Hier finden Sie die zuletzt bereitgestellten Änderungen an Policy-Web.
 	</p>
 
 	<iframe src="start.html" class="flex-container" title="Basisinformationen und Changelog"></iframe>

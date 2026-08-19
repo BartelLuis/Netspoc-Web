@@ -7,6 +7,7 @@ COPY go/ ./
 # COPY restores the repository's go.sum after the dependency-cache layer.
 # Tidy here records checksums for newly added direct and transitive modules.
 RUN go mod tidy
+RUN go test ./pkg/backend ./cmd/server
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/policyweb ./cmd/server
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/policyweb-create-user ./cmd/create-user
 
@@ -24,7 +25,7 @@ COPY --chown=policyweb:policyweb htdocs/silk-icons /srv/policyweb/silk-icons
 COPY --chown=policyweb:policyweb resources /srv/policyweb/resources
 COPY --chown=policyweb:policyweb go/pkg/backend/mail-templates /srv/policyweb/templates/mail
 COPY --chown=policyweb:policyweb go/pkg/backend/html-templates /srv/policyweb/templates/html
-COPY --chown=policyweb:policyweb app.html admin.html index.html start.html CHANGELOG.md ldap-login.html passwd.html /srv/policyweb/
+COPY --chown=policyweb:policyweb app.html admin.html index.html start.html CHANGELOG.md passwd.html /srv/policyweb/
 RUN test -f /srv/policyweb/app.html \
     -a -f /srv/policyweb/start.html \
     -a -f /srv/policyweb/CHANGELOG.md \

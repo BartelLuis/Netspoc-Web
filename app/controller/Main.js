@@ -309,16 +309,19 @@ Ext.define(
     },
 
     onAfterLogout: function () {
-
-        // Jump to login page.
-        window.location.href = document.referrer;
+        // Always leave the authenticated application. document.referrer may
+        // be empty or app.html itself and previously caused a mere reload.
+        window.location.replace('/');
     },
 
     onNavButtonClick: function (button, event, eOpts) {
         this.closeOpenWindows();
         var card = this.getMainCardPanel();
         var index = button.ownerCt.items.indexOf(button);
-        card.layout.setActiveItem(index);
+        var item = card.layout.setActiveItem(index);
+        if (button.getId() === 'btn_admin_tab' && item.loadAdmin) {
+            item.loadAdmin();
+        }
     },
 
     closeOpenWindows: function () {

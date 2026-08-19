@@ -42,6 +42,7 @@ func TestHostNameIsDerivedFromIPAddress(t *testing.T) {
 	p.Networks[0].Hosts[0].Name = ""
 	p.Networks[0].Hosts[0].IP = "172.25.26.1"
 	p.Networks[0].CIDR = "172.25.26.0/24"
+	p.Services[0].Rules[0].Destinations = []string{"host:ip-172-25-26-1"}
 	if err := validateEditablePolicy(p); err != nil { t.Fatal(err) }
 	if got := p.Networks[0].Hosts[0].Name; got != "ip-172-25-26-1" {
 		t.Fatalf("generated host name = %q", got)
@@ -182,6 +183,27 @@ func TestSelectedNetworksDefaultsToAllAndNormalizesNames(t *testing.T) {
 	}
 	if got := selectedNetworks("office", a); !slices.Equal(got, []string{"network:office"}) {
 		t.Fatalf("unprefixed network name was not normalized: %#v", got)
+	}
+}
+
+func TestMailRecipients(t *testing.T) {
+	got, err := mailRecipients("To: One <one@example.net>\nCc: two@example.net, ONE@example.net\nSubject: Test\n\nBody")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"one@example.net", "two@example.net"}) {
+		t.Fatalf("unexpected recipients: %#v", got)
+	}
+}
+
+func TestStripBccHeader(t *testing.T) {
+	message := "To: one@example.net\nBcc: hidden@example.net,\n another@example.net\nSubject: Test\n\nBody"
+	got := stripMailHeader(message, "bcc")
+	if strings.Contains(strings.ToLower(got), "bcc:") || strings.Contains(got, "another@example.net") {
+		t.Fatalf("Bcc header was not removed: %q", got)
+	}
+	if !strings.Contains(got, "Subject: Test\n\nBody") {
+		t.Fatalf("other message content was damaged: %q", got)
 	}
 }
 

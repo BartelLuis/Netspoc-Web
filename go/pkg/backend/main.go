@@ -30,7 +30,6 @@ func getMux() (*http.ServeMux, *state) {
 	}
 	noLoginMux := http.NewServeMux()
 	noLoginMux.HandleFunc("/login", s.loginHandler)
-	noLoginMux.HandleFunc("/ldap_login", s.ldapLoginHandler)
 	noLoginMux.HandleFunc("/get_policy", s.getPolicy)
 	noLoginMux.HandleFunc("/register", s.register)
 	noLoginMux.HandleFunc("/verify", s.verify)
@@ -47,6 +46,7 @@ func getMux() (*http.ServeMux, *state) {
 
 	needsLoginMux := http.NewServeMux()
 	needsLoginMux.HandleFunc("/get_diff", s.getDiff)
+	needsLoginMux.HandleFunc("/get_about_info", s.getAboutInfo)
 	needsLoginMux.HandleFunc("/get_diff_mail", s.getDiffMail)
 	needsLoginMux.HandleFunc("/set_diff_mail", s.setDiffMail)
 	needsLoginMux.HandleFunc("/get_admins", s.getAdmins)
@@ -82,6 +82,8 @@ func getMux() (*http.ServeMux, *state) {
 			h.ServeHTTP(w, r)
 		} else if h, pattern := noLoginMux.Handler(r); pattern != "" {
 			h.ServeHTTP(w, r)
+		} else {
+			http.NotFound(w, r)
 		}
 	})
 	return defaultMux, s

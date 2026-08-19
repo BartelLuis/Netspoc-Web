@@ -5,8 +5,6 @@ package backend
 import (
 	"fmt"
 	"net/http"
-
-	"github.com/go-ldap/ldap/v3"
 )
 
 func (s *state) setLogin(session *GoSession, email string) {
@@ -21,7 +19,10 @@ func (s *state) logout(session *GoSession) {
 func (s *state) logoutHandler(w http.ResponseWriter, r *http.Request) {
 	session := GetGoSession(r)
 	s.logout(session)
-	http.Redirect(w, r, "/", http.StatusFound)
+	// The ExtJS client performs the navigation after this request completes.
+	// Returning JSON avoids an Ajax request following the redirect and trying
+	// to parse the login page as store data.
+	writeRecords(w, []jsonMap{})
 }
 
 func (s *state) loginHandler(w http.ResponseWriter, r *http.Request) {
@@ -66,67 +67,6 @@ func (s *state) loginHandler(w http.ResponseWriter, r *http.Request) {
 	s.redirectToLandingPage(w)
 }
 
-func (s *state) ldapCheckPassGetEmail(w http.ResponseWriter, r *http.Request) string {
-	email := ""
-	user := r.FormValue("user")
-	if user == "" {
-		writeError(w, "Missing param 'user'", http.StatusBadRequest)
-		return ""
-	}
-	pass := r.FormValue("pass")
-	if pass == "" {
-		writeError(w, "Missing param 'pass'", http.StatusBadRequest)
-		return ""
-	}
-	s.checkAttack(r)
-	ldapURI := s.config.LdapURI
-	baseDN := s.config.LdapBaseDN
-	emailAttr := s.config.LdapEmailAttr
-	l, err := ldap.DialURL(ldapURI)
-	if err != nil {
-		//writeError(w, "LDAP connection failed: "+err.Error(), http.StatusInternalServerError)
-		writeHTMLError(w, "Login failed")
-		return ""
-	}
-	defer l.Close()
-
-	dn := fmt.Sprintf(s.config.LdapDNTemplate, user)
-	err = l.Bind(dn, pass)
-	if err != nil {
-		s.setAttack(r)
-		//writeError(w, "LDAP bind failed: "+err.Error(), http.StatusUnauthorized)
-		writeHTMLError(w, "Login failed")
-		return ""
-	}
-	s.clearAttack(r)
-
-	filter := fmt.Sprintf("("+s.config.LdapFilterTemplate+")", ldap.EscapeFilter(user))
-	searchRequest := ldap.NewSearchRequest(
-		baseDN,
-		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		filter,
-		[]string{emailAttr},
-		nil,
-	)
-
-	result, err := l.Search(searchRequest)
-	if err != nil {
-		writeError(w, "LDAP search failed: "+err.Error(), http.StatusInternalServerError)
-		return ""
-	}
-	if len(result.Entries) != 1 {
-		writeError(w, "LDAP search returned unexpected number of entries", http.StatusUnauthorized)
-		return ""
-	}
-	email = result.Entries[0].GetAttributeValue(emailAttr)
-	if email == "" {
-		msg := fmt.Sprintf("Can't find email address for %v", searchRequest.Filter)
-		writeError(w, msg, http.StatusUnauthorized)
-		return ""
-	}
-	return email
-}
-
 func (s *state) redirectToLandingPage(w http.ResponseWriter) {
 	// Redirect to ../app.html.
 	// It is built this way to comply how it was implemented using Perl.
@@ -142,22 +82,6 @@ func (s *state) redirectToLandingPage(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Location", "../app.html")
 	w.WriteHeader(http.StatusFound)
-}
-
-func (s *state) ldapLoginHandler(w http.ResponseWriter, r *http.Request) {
-	session := GetGoSession(r)
-	s.logout(session)
-	email := s.ldapCheckPassGetEmail(w, r)
-	if email == "" {
-		return
-	}
-	err := s.checkEmailAuthorization(email)
-	if err != nil {
-		//writeError(w, err.Error(), http.StatusForbidden)
-		return
-	}
-	s.setLogin(session, email)
-	s.redirectToLandingPage(w)
 }
 
 func writeHTMLError(w http.ResponseWriter, errorMsg string) {

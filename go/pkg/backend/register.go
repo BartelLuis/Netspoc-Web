@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/mail"
+	"net/smtp"
 	"os"
 	"os/exec"
 	"path"
@@ -139,6 +142,9 @@ func (s *state) storePassword(w http.ResponseWriter, email, hash string) {
 }
 
 func (s *state) sendEmail(text string) error {
+	if s.config.MailTransport == "smtp" {
+		return s.sendSMTP(text)
+	}
 	sendmail := s.config.SendmailCommand
 	noreply := s.config.NoreplyAddress
 
@@ -162,6 +168,83 @@ func (s *state) sendEmail(text string) error {
 		return err
 	}
 	return nil
+}
+
+func (s *state) sendSMTP(text string) error {
+	recipients, err := mailRecipients(text)
+	if err != nil {
+		return err
+	}
+	from, err := mail.ParseAddress(s.config.NoreplyAddress)
+	if err != nil {
+		return fmt.Errorf("invalid noreply_address: %w", err)
+	}
+	host := s.config.SMTPHost
+	addr := fmt.Sprintf("%s:%d", host, s.config.SMTPPort)
+	var auth smtp.Auth
+	if s.config.SMTPUsernameEnv != "" {
+		auth = smtp.PlainAuth("", os.Getenv(s.config.SMTPUsernameEnv), os.Getenv(s.config.SMTPPasswordEnv), host)
+	}
+	if !strings.Contains(strings.ToLower(text), "\nfrom:") && !strings.HasPrefix(strings.ToLower(text), "from:") {
+		text = "From: " + s.config.NoreplyAddress + "\n" + text
+	}
+	text = stripMailHeader(text, "bcc")
+	// SMTP messages use CRLF line endings on the wire.
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\n", "\r\n")
+	return smtp.SendMail(addr, auth, from.Address, recipients, []byte(text))
+}
+
+func stripMailHeader(text, header string) string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	result := make([]string, 0, len(lines))
+	skipping := false
+	inHeaders := true
+	prefix := strings.ToLower(header) + ":"
+	for _, line := range lines {
+		if inHeaders && line == "" {
+			inHeaders = false
+			skipping = false
+		}
+		if inHeaders && strings.HasPrefix(strings.ToLower(line), prefix) {
+			skipping = true
+			continue
+		}
+		if skipping && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+			continue
+		}
+		skipping = false
+		result = append(result, line)
+	}
+	return strings.Join(result, "\n")
+}
+
+func mailRecipients(text string) ([]string, error) {
+	message, err := mail.ReadMessage(bufio.NewReader(strings.NewReader(text)))
+	if err != nil {
+		return nil, fmt.Errorf("parse mail headers: %w", err)
+	}
+	var result []string
+	seen := make(map[string]bool)
+	for _, header := range []string{"To", "Cc", "Bcc"} {
+		addresses, err := message.Header.AddressList(header)
+		if err == mail.ErrHeaderNotPresent {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse %s header: %w", header, err)
+		}
+		for _, address := range addresses {
+			key := strings.ToLower(address.Address)
+			if !seen[key] {
+				result = append(result, address.Address)
+				seen[key] = true
+			}
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("mail has no recipient")
+	}
+	return result, nil
 }
 
 func (s *state) sendVerificationEmail(email, url, ip string) error {

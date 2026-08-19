@@ -72,14 +72,14 @@ type config struct {
 	SessionDir         string           `json:"session_dir"`
 	UserDir            string           `json:"user_dir"`
 	SendmailCommand    string           `json:"sendmail_command"`
+	MailTransport      string           `json:"mail_transport"`
+	SMTPHost           string           `json:"smtp_host"`
+	SMTPPort           int              `json:"smtp_port"`
+	SMTPUsernameEnv    string           `json:"smtp_username_env"`
+	SMTPPasswordEnv    string           `json:"smtp_password_env"`
 	MailTemplate       string           `json:"mail_template"`
 	HTMLTemplate       string           `json:"html_template"`
 	ExpireLoggedIn     int              `json:"expire_logged_in"`
-	LdapURI            string           `json:"ldap_uri"`
-	LdapDNTemplate     string           `json:"ldap_dn_template"`
-	LdapBaseDN         string           `json:"ldap_base_dn"`
-	LdapFilterTemplate string           `json:"ldap_filter_template"`
-	LdapEmailAttr      string           `json:"ldap_email_attr"`
 	BusinessUnits      []string         `json:"business_units"`
 	AboutInfoTemplate  string           `json:"about_info_template"`
 	FortinetTargets    []FortinetTarget `json:"fortinet_targets,omitempty"`
@@ -103,14 +103,21 @@ func LoadConfig() *config {
 	// Set some defaults
 	var c config
 	c.SendmailCommand = "/usr/lib/sendmail"
+	c.MailTransport = "sendmail"
+	c.SMTPPort = 587
 	c.MailTemplate = filepath.Join(home, "Netspoc-Web", "go", "pkg", "backend", "mail-templates")
 	c.HTMLTemplate = filepath.Join(home, "Netspoc-Web", "go", "pkg", "backend", "html-templates")
 	c.ExpireLoggedIn = 480 // 8 hours
-	c.AboutInfoTemplate = c.HTMLTemplate + "/about_info"
 
 	// Override with config file
 	if err := json.Unmarshal(data, &c); err != nil {
 		abort("in %q: %v", p, err)
+	}
+	// Derive this default only after html_template from the configuration has
+	// been applied. Otherwise containers keep the pre-config home-directory
+	// path and the info dialog remains empty.
+	if c.AboutInfoTemplate == "" {
+		c.AboutInfoTemplate = filepath.Join(c.HTMLTemplate, "about_info")
 	}
 
 	// Check for required config vars.
@@ -139,14 +146,14 @@ func LoadConfig() *config {
 		"session_dir":          true,
 		"user_dir":             true,
 		"sendmail_command":     true,
+		"mail_transport":       true,
+		"smtp_host":            true,
+		"smtp_port":            true,
+		"smtp_username_env":    true,
+		"smtp_password_env":    true,
 		"mail_template":        true,
 		"html_template":        true,
 		"expire_logged_in":     true,
-		"ldap_uri":             true,
-		"ldap_dn_template":     true,
-		"ldap_base_dn":         true,
-		"ldap_filter_template": true,
-		"ldap_email_attr":      true,
 		"business_units":       true,
 		"about_info_template":  true,
 		"fortinet_targets":     true,
@@ -159,6 +166,20 @@ func LoadConfig() *config {
 	for i, target := range c.FortinetTargets {
 		if err := target.validate(); err != nil {
 			abort("Invalid fortinet_targets[%d]: %v", i, err)
+		}
+	}
+	if c.MailTransport != "sendmail" && c.MailTransport != "smtp" {
+		abort("mail_transport must be sendmail or smtp")
+	}
+	if c.MailTransport == "smtp" {
+		if c.SMTPHost == "" || c.SMTPPort < 1 || c.SMTPPort > 65535 {
+			abort("smtp_host and a valid smtp_port are required for SMTP")
+		}
+		if (c.SMTPUsernameEnv == "") != (c.SMTPPasswordEnv == "") {
+			abort("smtp_username_env and smtp_password_env must be configured together")
+		}
+		if c.SMTPUsernameEnv != "" && (os.Getenv(c.SMTPUsernameEnv) == "" || os.Getenv(c.SMTPPasswordEnv) == "") {
+			abort("SMTP credential environment variables are empty")
 		}
 	}
 	return &c

@@ -78,7 +78,7 @@ Ext.define(
                     {
                         id           : 'btn_admin_tab',
                         text         : 'Administration',
-                        iconCls      : 'icon-application_form_edit',
+                        iconCls      : 'icon-wrench',
                         toggleGroup  : 'navGrp',
                         enableToggle : true,
                         hidden       : true
