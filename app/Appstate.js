@@ -84,6 +84,10 @@ var appstate = (
             if (history.current) {
                 return history.policy;
             }
+            else if (history.policy && history.policy.charAt(0) === 'p') {
+                // GUI publications live directly under their immutable ID.
+                return history.policy;
+            }
             else {
                 return history.date;
             }

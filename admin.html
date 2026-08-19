@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Policy-Web Administration</title>
+  <style>
+    :root { color-scheme:light; font:13px Arial,sans-serif; background:#fff; color:#333 }
+    * { box-sizing:border-box } body { margin:0 } header { background:linear-gradient(#eaf2f8,#c9d9e8); border-bottom:1px solid #99bce8; color:#234; padding:.55rem 1rem; display:flex; justify-content:space-between; align-items:center }
+    main { max-width:1200px; margin:auto; padding:10px } nav { display:flex; gap:2px; margin:8px 0 0; flex-wrap:wrap; border-bottom:1px solid #99bce8 }
+    button,.button { border:1px solid #a9bfd3; border-radius:2px; padding:5px 10px; cursor:pointer; background:linear-gradient(#fff,#dce7f0); color:#234; font-weight:normal; text-decoration:none }
+    button:hover { border-color:#7eadd5; background:linear-gradient(#fff,#c7e0f4) } button.primary { border-color:#518fbd; background:linear-gradient(#dcefff,#9fc7e7); color:#123 } button.danger { color:#8b1a1a } button:disabled { opacity:.55; cursor:wait }
+    section { display:none; border:1px solid #99bce8; border-top:0; padding:8px; min-height:250px } section.active { display:block } .card { background:#fff; border:1px solid #b5c8d8; border-radius:0; padding:10px; margin:6px 0 }
+    .row { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:.75rem; align-items:end }
+    label { display:flex; flex-direction:column; gap:.3rem; font-size:.88rem; font-weight:600 } input,select,textarea { padding:.55rem; border:1px solid #9babb7; border-radius:4px; font:inherit; width:100% }
+    .rule { border-left:4px solid #66a0c2; padding-left:.75rem; margin:.75rem 0 } .actions { display:flex; gap:.5rem; margin-top:1rem; flex-wrap:wrap }
+    #message { min-height:1.5rem; padding:.65rem 0 } .error { color:#a01818 } .success { color:#176b35 } small { color:#526574 }
+  </style>
+</head>
+<body>
+<header><div><strong>Policy-Web</strong> · Administration</div><a class="button" href="/app.html">Übersicht</a></header>
+<main>
+  <datalist id="owner-options"></datalist>
+  <div class="card"><label>Policy-Name<input id="policy-name" required pattern="[A-Za-z0-9][A-Za-z0-9_.:-]*" value="policy"></label><small>Änderungen bleiben bis zur bestätigten Veröffentlichung ein Entwurf.</small></div>
+  <div class="card"><strong>Diff- und Policy-IDs</strong><div id="revision-list"><small>Noch keine gespeicherten Diffs.</small></div></div>
+  <nav id="tabs"><button data-tab="users">Benutzer</button><button data-tab="owners">Verantwortungsbereiche</button><button data-tab="networks">Netze &amp; IP-Adressen</button><button data-tab="services">Dienste &amp; Regeln</button></nav>
+  <section id="users" class="active"><div id="user-list"></div><button data-add="user">+ Benutzer</button></section>
+  <section id="owners"><div id="owner-list"></div><button data-add="owner">+ Verantwortungsbereich</button></section>
+  <section id="networks"><div id="network-list"></div><button data-add="network">+ Netz</button></section>
+  <section id="services"><div id="service-list"></div><button data-add="service">+ Dienst</button></section>
+  <div class="actions"><button id="save">Entwurf speichern</button><button id="publish" class="primary">Diff erstellen</button></div>
+  <div id="diff-panel" class="card" hidden><h3>Ausstehende Policy-Änderungen</h3><div id="diff-list"></div><div class="actions"><button id="approve" class="primary">Diff bestätigen und veröffentlichen</button><button id="cancel-diff">Abbrechen</button></div></div>
+  <div id="message" role="status"></div>
+</main>
+<template id="user-template"><div class="card item user"><div class="row"><label>E-Mail<input data-field="email" type="email" required></label><label>Policy-Rolle<select data-field="role"><option value="viewer">Leser</option><option value="editor">Bearbeiter</option><option value="admin">Administrator</option></select></label><label>Kennwort<input data-field="password" type="password" placeholder="Leer lassen für unverändert"></label><button class="danger remove">Entfernen</button></div></div></template>
+<template id="owner-template"><div class="card item owner"><div class="row"><label>Name<input data-field="name" required></label><label>Übergeordneter Bereich<select data-field="parent"><option value="">Keiner</option></select></label><label>Zugeordnete Benutzer (E-Mails)<input data-field="users"></label><label>Bereichsadministratoren (E-Mails)<input data-field="admins"></label><label>Beobachter (E-Mails)<input data-field="watchers"></label><button class="danger remove">Entfernen</button></div></div></template>
+<template id="network-template"><div class="card item network"><div class="row"><label>Name<input data-field="name" required></label><label>CIDR<input data-field="cidr" placeholder="10.20.0.0/16" required></label><label>Owner<select data-field="owner"></select></label><button class="danger remove">Remove</button></div><h4>Hosts</h4><div class="host-list"></div><button class="add-host">+ Host</button></div></template>
+<template id="host-template"><div class="item host"><div class="row"><label>Name (optional)<input data-field="name" placeholder="Wird aus der IP erzeugt"></label><label>IP-Adresse<input data-field="ip" required></label><label>Verantwortungsbereich (Pflichtfeld)<input data-field="owner" list="owner-options" required placeholder="VB auswählen"></label><button class="danger remove">Entfernen</button></div></div></template>
+<template id="service-template"><div class="card item service"><div class="row"><label>Name<input data-field="name" required></label><label>Description<input data-field="description"></label><label>Owners (comma separated)<input data-field="owners"></label><button class="danger remove">Remove</button></div><h4>Rules</h4><div class="rule-list"></div><button class="add-rule">+ Rule</button></div></template>
+<template id="rule-template"><div class="rule item"><div class="row"><label>Action<select data-field="action"><option>permit</option><option>deny</option></select></label><label>Sources (object names)<input data-field="sources" placeholder="network:clients"></label><label>Destinations<input data-field="destinations" placeholder="host:server"></label><label>Protocols<input data-field="protocols" placeholder="tcp 443"></label><button class="danger remove">Remove</button></div></div></template>
+<script>
+const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const embedded=new URLSearchParams(location.search).has('embedded');
+if(embedded){$('header').style.display='none';$('main').style.maxWidth='none';}
+const split=v=>v.split(',').map(x=>x.trim()).filter(Boolean), join=v=>(v||[]).join(', ');
+let initialized=false,pendingApproval='',pendingPolicy=null,pendingPolicyID='',currentRole='',revisionItems=[];
+function message(text,error=false){const el=$('#message');el.textContent=text;el.className=error?'error':'success'}
+function add(type,data={}){const node=$('#'+type+'-template').content.firstElementChild.cloneNode(true);const list=type==='host'?data.parent.querySelector('.host-list'):type==='rule'?data.parent.querySelector('.rule-list'):$('#'+type+'-list');const requestedOwner=data.owner,requestedParent=data.parent;
+  $$('[data-field]',node).forEach(el=>{const key=el.dataset.field;if(data[key]!==undefined)el.value=Array.isArray(data[key])?join(data[key]):data[key]});
+  $('.remove',node).onclick=()=>{node.remove();refreshOwners()};
+  // Attach first: owner selects in nested hosts need to be discoverable by
+  // refreshOwners before their saved value can be restored.
+  list.appendChild(node);refreshOwners();
+  if((type==='network'||type==='host')&&requestedOwner){const select=$('[data-field=owner]',node);select.value=requestedOwner;select.dataset.savedValue=requestedOwner;}
+  if(type==='owner'&&requestedParent){const select=$('[data-field=parent]',node);select.value=requestedParent;select.dataset.savedValue=requestedParent;}
+  if(type==='network'){$('.add-host',node).onclick=()=>add('host',{parent:node});(data.hosts||[]).forEach(x=>add('host',{...x,parent:node}))}
+  if(type==='service'){$('.add-rule',node).onclick=()=>add('rule',{parent:node});(data.rules||[]).forEach(x=>add('rule',{...x,parent:node}))}
+  return node;
+}
+function refreshOwners(){const names=$$('.owner [data-field=name]').map(x=>x.value).filter(Boolean);$('#owner-options').innerHTML=names.map(n=>`<option value="${escapeHTML(n)}"></option>`).join('');$$('select[data-field=owner],select[data-field=parent]').forEach(sel=>{const old=sel.value||sel.dataset.savedValue||'',own=sel.closest('.owner')?.querySelector('[data-field=name]')?.value;const choices=names.filter(n=>n!==own);sel.innerHTML='<option value="">'+(sel.dataset.field==='parent'?'Keiner':'Bereich wählen')+'</option>'+choices.map(n=>`<option>${escapeHTML(n)}</option>`).join('');sel.value=old;if(sel.value)sel.dataset.savedValue=sel.value})}
+function escapeHTML(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+document.addEventListener('input',e=>{if(e.target.matches('.owner [data-field=name]'))refreshOwners()});
+document.addEventListener('change',e=>{if(e.target.matches('select[data-field=owner],select[data-field=parent]'))e.target.dataset.savedValue=e.target.value});
+$$('[data-add]').forEach(b=>b.onclick=()=>add(b.dataset.add));
+$('#tabs').onclick=e=>{if(!e.target.dataset.tab)return;$$('section').forEach(x=>x.classList.toggle('active',x.id===e.target.dataset.tab))};
+function values(node){const out={};$$('[data-field]',node).filter(el=>el.closest('.item')===node).forEach(el=>out[el.dataset.field]=['users','admins','watchers','owners','sources','destinations','protocols'].includes(el.dataset.field)?split(el.value):el.value);return out}
+function policy(){return {name:$('#policy-name').value.trim(),users:$$('.user').map(values),owners:$$('.owner').map(values),networks:$$('.network').map(n=>({...values(n),hosts:$$('.host',n).map(values).filter(h=>h.name||h.ip)})),services:$$('.service').map(s=>({...values(s),rules:$$('.rule',s).map(values)}))}}
+function render(p){$('#policy-name').value=p.name||'policy';['user','owner','network','service'].forEach(t=>$('#'+t+'-list').innerHTML='');(p.users||[]).forEach(x=>add('user',x));(p.owners||[]).forEach(x=>add('owner',x));(p.networks||[]).forEach(x=>add('network',x));(p.services||[]).forEach(x=>add('service',x));refreshOwners()}
+async function request(url,options={}){const response=await fetch(url,options);let data={};try{data=await response.json()}catch(e){}if(!response.ok||data.success===false)throw new Error(data.msg||response.statusText);return data}
+async function save(){message('');try{await request('backend6/admin/policy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(policy())});message('Entwurf gespeichert.')}catch(e){message(e.message,true)}}
+function renderRevisions(items){revisionItems=(items||[]).map(x=>({...x,changes:x.changes||[]}));$('#revision-list').innerHTML=revisionItems.length?revisionItems.map(x=>`<details><summary><strong>${escapeHTML(x.version)}</strong> · ${escapeHTML(x.status)} · ${x.changes.length} Änderung(en) · ${escapeHTML(x.created_at)}</summary>${x.changes.map(c=>`<div>${escapeHTML(c.change)} · ${escapeHTML(c.type)} · <strong>${escapeHTML(c.name)}</strong></div>`).join('')}${x.status==='pending'?`<button class="open-revision" data-id="${escapeHTML(x.version)}">Diff öffnen</button>`:''}</details>`).join(''):'<small>Noch keine gespeicherten Diffs.</small>'}
+async function openRevision(id){try{const result=await request('backend6/admin/revision?policy_id='+encodeURIComponent(id)),changes=result.changes||[];pendingPolicy=result.policy;pendingPolicyID=result.policy_id;pendingApproval=result.approval;$('#diff-list').innerHTML=`<div><strong>Policy-ID: ${escapeHTML(id)}</strong></div>`+changes.map(c=>`<div>${escapeHTML(c.change)} · ${escapeHTML(c.type)} · <strong>${escapeHTML(c.name)}</strong></div>`).join('');$('#diff-panel').hidden=false;$('#approve').disabled=currentRole!=='admin';}catch(e){message(e.message,true)}}
+$('#revision-list').onclick=e=>{if(e.target.classList.contains('open-revision'))openRevision(e.target.dataset.id)};
+async function createDiff(){message('');try{const p=policy();if(!initialized){await request('backend6/admin/bootstrap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});initialized=true;message('Initiale Policy veröffentlicht. Bitte neu anmelden.');return}const result=await request('backend6/admin/diff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}),changes=result.changes||[];pendingPolicy=p;pendingPolicyID=result.policy_id;pendingApproval=result.approval;revisionItems.unshift({version:result.policy_id,status:'pending',created_at:new Date().toISOString(),changes:changes});renderRevisions(revisionItems);$('#diff-list').innerHTML=`<div><strong>Policy-ID: ${escapeHTML(pendingPolicyID)}</strong></div>`+(changes.length?changes.map(c=>`<div>${escapeHTML(c.change)} · ${escapeHTML(c.type)} · <strong>${escapeHTML(c.name)}</strong></div>`).join(''):'<div>Keine Änderungen.</div>');$('#diff-panel').hidden=false;$('#approve').disabled=currentRole!=='admin';}catch(e){message(e.message,true)}}
+async function approve(){try{await request('backend6/admin/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({policy_id:pendingPolicyID,approval:pendingApproval})});$('#diff-panel').hidden=true;revisionItems.forEach(x=>{if(x.version===pendingPolicyID)x.status='published'});renderRevisions(revisionItems);message(`Diff bestätigt und Policy ${pendingPolicyID} veröffentlicht. Ansicht wird aktualisiert.`);setTimeout(()=>window.top.location.reload(),1000)}catch(e){message(e.message,true)}}
+$('#save').onclick=save;$('#publish').onclick=createDiff;$('#approve').onclick=approve;$('#cancel-diff').onclick=()=>{$('#diff-panel').hidden=true;pendingApproval='';pendingPolicy=null;pendingPolicyID=''};
+(async()=>{try{const status=await request('backend6/admin/status');initialized=status.initialized;currentRole=status.role||'';if(initialized&&!status.authenticated){location.href='/?return=admin.html';return}if(initialized&&currentRole!=='admin'&&currentRole!=='editor'){if(embedded){document.body.innerHTML='';}else{location.replace('/app.html');}return}render(status.policy||{name:'policy'});renderRevisions(status.revisions);if(!initialized){add('user',{role:'admin'});add('owner');message('Initial setup: add an administrator with a password, assign that email to an owner, then publish.')}}catch(e){message(e.message,true)}})();
+</script>
+</body></html>

@@ -42,6 +42,8 @@ func getMux() (*http.ServeMux, *state) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(jsonMap{"status": "ok"})
 	})
+	noLoginMux.HandleFunc("/admin/status", s.adminStatus)
+	noLoginMux.HandleFunc("/admin/bootstrap", s.adminBootstrap)
 
 	needsLoginMux := http.NewServeMux()
 	needsLoginMux.HandleFunc("/get_diff", s.getDiff)
@@ -64,6 +66,10 @@ func getMux() (*http.ServeMux, *state) {
 	needsLoginMux.HandleFunc("/service_list", s.serviceList)
 	needsLoginMux.HandleFunc("/set", s.setSessionData)
 	needsLoginMux.HandleFunc("/fortinet/status", s.getFortinetStatus)
+	needsLoginMux.HandleFunc("/admin/policy", s.adminPolicy)
+	needsLoginMux.HandleFunc("/admin/diff", s.adminDiff)
+	needsLoginMux.HandleFunc("/admin/revision", s.adminRevision)
+	needsLoginMux.HandleFunc("/admin/publish", s.adminPublish)
 
 	defaultMux := http.NewServeMux()
 	defaultMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

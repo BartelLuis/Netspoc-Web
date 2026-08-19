@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 func (s *state) getHistoryParamOrCurrentPolicy(r *http.Request) string {
@@ -88,8 +89,33 @@ func (s *state) getHistory(w http.ResponseWriter, r *http.Request) {
 func (s *state) generateHistory(r *http.Request) ([]map[string]string, error) {
 	owner := r.FormValue("active_owner")
 	current := s.readPolicy()
+	if len(current) == 0 {
+		return nil, fmt.Errorf("current policy is unavailable")
+	}
 	currentPolicy := current[0]["policy"]
 	result := []map[string]string{current[0]}
+
+	// GUI-published policies use their immutable p... policy ID as directory
+	// name. Keep every published version selectable instead of hiding all but
+	// the current symlink behind the legacy date-based history convention.
+	entries, err := os.ReadDir(s.config.NetspocData)
+	if err != nil {
+		return nil, fmt.Errorf("can't read policy directory: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "p") || entry.Name() == currentPolicy {
+			continue
+		}
+		policyDir := filepath.Join(s.config.NetspocData, entry.Name())
+		if _, err := os.Stat(filepath.Join(policyDir, "owner", owner)); err != nil {
+			continue
+		}
+		policyEntry, err := getPolicyFromFile(policyDir)
+		if err != nil || policyEntry["policy"] != entry.Name() {
+			continue
+		}
+		result = append(result, policyEntry)
+	}
 	/* Add data from directory "history",
 	   # containing a subdirecory for each revision:
 	   # 2020-04-08/
@@ -103,10 +129,13 @@ func (s *state) generateHistory(r *http.Request) ([]map[string]string, error) {
 	// We take date, time from POLICY file.
 	histPath := filepath.Join(s.config.NetspocData, "/history")
 	if _, err := os.Stat(histPath); os.IsNotExist(err) {
+		sort.SliceStable(result, func(i, j int) bool {
+			return result[i]["policy"] > result[j]["policy"]
+		})
 		return result, nil
 	}
 
-	entries, err := os.ReadDir(histPath)
+	entries, err = os.ReadDir(histPath)
 	if err != nil {
 		return nil, fmt.Errorf("can't read history directory: %w", err)
 	}
@@ -142,8 +171,10 @@ func (s *state) generateHistory(r *http.Request) ([]map[string]string, error) {
 		result = append(result, policyEntry)
 	}
 
-	sort.Slice(result, func(i, j int) bool {
-		return result[i]["date"] > result[j]["date"]
+	sort.SliceStable(result, func(i, j int) bool {
+		left := result[i]["date"] + result[i]["time"] + result[i]["policy"]
+		right := result[j]["date"] + result[j]["time"] + result[j]["policy"]
+		return left > right
 	})
 
 	return result, nil

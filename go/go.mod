@@ -7,6 +7,7 @@ require (
 	github.com/hknutzen/testtxt v0.0.0-20240408182449-0168fe18ebfb
 	github.com/pkg/diff v0.0.0-20241224192749-4e6772a4315c
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
+	modernc.org/sqlite v1.46.1
 )
 
 require (

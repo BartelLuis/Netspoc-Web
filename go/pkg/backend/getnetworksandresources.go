@@ -4,6 +4,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 )
 
 func (s *state) getNetworks(w http.ResponseWriter, r *http.Request) {
@@ -13,10 +14,24 @@ func (s *state) getNetworks(w http.ResponseWriter, r *http.Request) {
 
 func (s *state) generateNetworks(r *http.Request) []*object {
 	owner := r.FormValue("active_owner")
+	if owner == "" {
+		owner = getOwnerFromSession(r)
+	}
 	chosen := r.FormValue("chosen_networks")
 	history := s.getHistoryParamOrCurrentPolicy(r)
 	assets := s.loadAssets(history, owner)
-	networkNames := assets.networkList
+	networkSet := make(map[string]bool, len(assets.networkList))
+	for _, name := range assets.networkList {
+		networkSet[name] = true
+	}
+	// The object table is authoritative. Merge it with the legacy assets index
+	// so owned networks remain visible even when that index is stale.
+	for name, object := range s.loadObjects(history) {
+		if object.Owner == owner && strings.HasPrefix(name, "network:") {
+			networkSet[name] = true
+		}
+	}
+	networkNames := slices.Sorted(maps.Keys(networkSet))
 	if chosen != "" {
 		networkNames = untaintNetworks(chosen, assets)
 	}
@@ -25,42 +40,65 @@ func (s *state) generateNetworks(r *http.Request) []*object {
 
 func (s *state) getNetworkResourcesForNetworks(r *http.Request, selected string) []jsonMap {
 	var data []jsonMap
-	if selected != "" {
-		owner := r.FormValue("active_owner")
-		history := s.getHistoryParamOrCurrentPolicy(r)
-		assets := s.loadAssets(history, owner)
-		networkNames := untaintNetworks(selected, assets)
-		natSet := s.loadNATSet(history, owner)
-		objects := s.loadObjects(history)
-		for _, networkName := range networkNames {
-			childNames := assets.net2childs[networkName]
-			for _, childName := range childNames {
-				obj := getObject(objects, childName)
+	owner := r.FormValue("active_owner")
+	if owner == "" {
+		owner = getOwnerFromSession(r)
+	}
+	history := s.getHistoryParamOrCurrentPolicy(r)
+	assets := s.loadAssets(history, owner)
+	networkNames := selectedNetworks(selected, assets)
+	natSet := s.loadNATSet(history, owner)
+	objects := s.loadObjects(history)
+	for _, networkName := range networkNames {
+		childNames := assets.net2childs[networkName]
+		for _, childName := range childNames {
+			obj, found := objects[childName]
+			if !found {
+				continue
+			}
+			entry := jsonMap{
+				"name":       networkName,
+				"child_ip":   s.name2IP(history, childName, natSet),
+				"child_name": childName,
+				"child_owner": map[string]string{
+					"owner": obj.Owner,
+				},
+			}
+			data = append(data, entry)
+			ip6 := s.name2IP6(history, childName)
+			if ip6 != "" {
 				entry := jsonMap{
 					"name":       networkName,
-					"child_ip":   s.name2IP(history, childName, natSet),
+					"child_ip":   ip6,
 					"child_name": childName,
 					"child_owner": map[string]string{
 						"owner": obj.Owner,
 					},
 				}
 				data = append(data, entry)
-				ip6 := s.name2IP6(history, childName)
-				if ip6 != "" {
-					entry := jsonMap{
-						"name":       networkName,
-						"child_ip":   ip6,
-						"child_name": childName,
-						"child_owner": map[string]string{
-							"owner": obj.Owner,
-						},
-					}
-					data = append(data, entry)
-				}
 			}
 		}
 	}
 	return data
+}
+
+// selectedNetworks accepts values with or without the legacy "network:"
+// prefix. On initial page load an empty selection means all visible networks.
+func selectedNetworks(selected string, a *assets) []string {
+	if strings.TrimSpace(selected) == "" {
+		result := slices.Clone(a.networkList)
+		slices.Sort(result)
+		return result
+	}
+	parts := strings.Split(selected, ",")
+	for i, name := range parts {
+		name = strings.TrimSpace(name)
+		if name != "" && !strings.HasPrefix(name, "network:") {
+			name = "network:" + name
+		}
+		parts[i] = name
+	}
+	return intersect(parts, a.networkList)
 }
 
 func (s *state) getNetworkResources(w http.ResponseWriter, r *http.Request) {

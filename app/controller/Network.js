@@ -142,8 +142,21 @@ Ext.define(
                 return net_hash[item.get('name')];
             };
             var all_records = grid.getStore().getRange();
-            var records = all_records.filter( net_filter );
-            grid.getSelectionModel().select( records );
+            // With no explicit filter, show the resources of every owned
+            // network immediately. Previously the right-hand IP list stayed
+            // empty until the user manually selected a network.
+            var records = networks_csv ? all_records.filter(net_filter) : all_records;
+            var sm = grid.getSelectionModel();
+            sm.select(records, false, true);
+            var resources = this.getNetworkResourcesStore();
+            if (records.length > 0) {
+                resources.getProxy().extraParams.selected_networks =
+                    record_names_as_csv(records);
+                resources.load();
+            }
+            else {
+                resources.removeAll();
+            }
         },
 
 	onSelect : function( sm, network ) {

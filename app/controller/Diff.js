@@ -128,7 +128,8 @@ Ext.define(
     onSelectDiffPolicy: function (combo, records) {
         var record = records[0];
         var tree = this.getDiffView();
-        var version = record.get('date');
+        var policy = record.get('policy');
+        var version = policy && policy.charAt(0) === 'p' ? policy : record.get('date');
         var node = tree.getRootNode();
         var store = this.getDiffTreeStore();
         combo.setValue(version);
@@ -142,11 +143,10 @@ Ext.define(
 
     onBeforeQuery: function (qe) {
         var policy = appstate.getPolicy();
-        // Skip first character "p". Convert string to int for comparison.
-        var pnum = parseInt(policy.slice(1));
         var filter = function (record, id) {
-            var pnum2 = parseInt(record.get('policy').slice(1));
-            return (pnum2 < pnum);
+            // Generated IDs exceed JavaScript's safe integer range. Their
+            // fixed timestamp format can be compared without losing precision.
+            return record.get('policy') < policy;
         };
         var store = qe.combo.getStore();
 

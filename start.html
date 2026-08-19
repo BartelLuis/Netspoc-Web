@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Policy-Web – Informationen</title>
+  <style>
+    :root { font: 14px Arial, sans-serif; color: #263746; background: #f5f8fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 18px; }
+    main { max-width: 1050px; margin: auto; }
+    h1, h2 { color: #274f70; }
+    h1 { margin-top: 0; font-size: 1.55rem; }
+    h2 { font-size: 1.1rem; margin-top: 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+    .card { background: white; border: 1px solid #b5c8d8; border-radius: 3px; padding: 16px; }
+    .changelog { grid-column: 1 / -1; }
+    .changelog h1 { font-size: 1.3rem; margin-top: 0; }
+    .changelog h2 { margin: 1.3rem 0 .4rem; border-bottom: 1px solid #d8e2ea; padding-bottom: .3rem; }
+    .changelog h3 { margin: 1rem 0 .25rem; color: #365e7d; }
+    .changelog p { line-height: 1.45; }
+    ul { margin: .5rem 0 0; padding-left: 1.25rem; }
+    li + li { margin-top: .4rem; }
+    .version { color: #526574; font-size: .9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Willkommen bei Policy-Web</h1>
+  <div class="grid">
+    <section class="card">
+      <h2>Überblick</h2>
+      <p>Policy-Web stellt Netzwerke, enthaltene IP-Ressourcen, Dienste und
+        Regeländerungen einer Netspoc-Policy übersichtlich dar.</p>
+      <ul>
+        <li>Netze und die darin enthaltenen IP-Adressen einsehen</li>
+        <li>Dienste, Regeln und Verantwortungsbereiche durchsuchen</li>
+        <li>Policy-Stände vergleichen und Änderungen nachvollziehen</li>
+      </ul>
+    </section>
+    <section class="card">
+      <h2>Administration</h2>
+      <p>Administratoren und Bearbeiter können Verantwortungsbereiche,
+        Benutzer, Netze, IP-Adressen und Dienste verwalten.</p>
+      <p>Änderungen werden zunächst als Diff mit eigener Policy-ID erstellt
+        und erst nach Bestätigung veröffentlicht.</p>
+    </section>
+    <section class="card changelog">
+      <div id="changelog"><p class="version">Changelog wird geladen …</p></div>
+    </section>
+  </div>
+</main>
+<script>
+  const escapeHTML = text => text.replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[char]);
+
+  function renderMarkdown(markdown) {
+    const lines = markdown.replace(/\r/g, '').split('\n');
+    let html = '', inList = false;
+    const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+    for (const rawLine of lines) {
+      const line = escapeHTML(rawLine.trim());
+      const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+      const item = /^[-*]\s+(.+)$/.exec(line);
+      if (heading) {
+        closeList();
+        const level = heading[1].length;
+        html += `<h${level}>${heading[2]}</h${level}>`;
+      } else if (item) {
+        if (!inList) { html += '<ul>'; inList = true; }
+        html += `<li>${item[1]}</li>`;
+      } else if (line) {
+        closeList();
+        html += `<p>${line}</p>`;
+      } else {
+        closeList();
+      }
+    }
+    closeList();
+    return html;
+  }
+
+  fetch('CHANGELOG.md', { cache: 'no-store' })
+    .then(response => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.text();
+    })
+    .then(markdown => document.getElementById('changelog').innerHTML = renderMarkdown(markdown))
+    .catch(error => document.getElementById('changelog').innerHTML =
+      `<h2>Changelog</h2><p class="version">Konnte nicht geladen werden: ${escapeHTML(error.message)}</p>`);
+</script>
+</body>
+</html>

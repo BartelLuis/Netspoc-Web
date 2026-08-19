@@ -4,6 +4,8 @@ policyweb-*
 .vscode
 *~
 .env
+docker/netspoc-data/*
+!docker/netspoc-data/.gitkeep
 go/cmd/*/*
 !go/cmd/*/*.go
 !go/cmd/*/testdata

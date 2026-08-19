@@ -14,7 +14,11 @@ services:
         required: false
     volumes:
       - ./docker/policyweb.conf:/etc/policyweb/policyweb.conf:ro
-      - ${NETSPOC_DATA:-./docker/netspoc-data}:/var/lib/policyweb/netspoc:ro
+      # Hand-maintained changelog; browser refresh is enough after editing.
+      - ./CHANGELOG.md:/srv/policyweb/CHANGELOG.md:ro
+      # Writable because the policy administration UI stores drafts and
+      # publishes generated policy versions here.
+      - ${NETSPOC_DATA:-./docker/netspoc-data}:/var/lib/policyweb/netspoc
       - policyweb-sessions:/var/lib/policyweb/sessions
       - policyweb-users:/var/lib/policyweb/users
     read_only: true

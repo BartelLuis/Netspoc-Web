@@ -216,14 +216,26 @@ func (c *cache) loadAssets(version, owner string) *assets {
 	defer entry.assetsMu.Unlock()
 	if entry.assets == nil {
 		var origAssets struct {
-			Anys map[string]struct {
-				Networks map[string][]string
-			}
+			Anys json.RawMessage `json:"anys"`
 		}
 		c.readOwnerPart(version, owner, "assets", &origAssets)
 		// Flatten nested data.
 		result := &assets{net2childs: make(map[string][]string)}
-		for _, n2c := range origAssets.Anys {
+		var grouped map[string]struct {
+			Networks map[string][]string `json:"networks"`
+		}
+		if err := json.Unmarshal(origAssets.Anys, &grouped); err == nil {
+			for _, n2c := range grouped {
+				maps.Copy(result.net2childs, n2c.Networks)
+			}
+		}
+		// Accept the flat shape emitted by earlier Policy-Web GUI versions so
+		// existing published policies immediately regain their contained IPs.
+		var flat struct {
+			Networks map[string][]string `json:"networks"`
+		}
+		if err := json.Unmarshal(origAssets.Anys, &flat); err == nil {
+			n2c := flat
 			maps.Copy(result.net2childs, n2c.Networks)
 		}
 		result.networkList = slices.Collect(maps.Keys(result.net2childs))
@@ -254,6 +266,9 @@ func (c *cache) loadServiceLists(version, owner string) *serviceLists {
 	entry.serviceListsMu.Lock()
 	defer entry.serviceListsMu.Unlock()
 	if entry.serviceLists == nil {
+		// Keep a usable empty value when importing an incomplete policy. Older
+		// or hand-written exports do not always contain every per-owner file.
+		entry.serviceLists = &serviceLists{}
 		c.readOwnerPart(version, owner, "service_lists", &entry.serviceLists)
 		// Add map with all accessible service names.
 		m := make(map[string]bool)
@@ -319,6 +334,9 @@ func (c *cache) readPart(version, part string, result interface{}) {
 	realPath := filepath.Join(dir, version, part)
 	fd, err := os.Open(realPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
 		panic(err)
 	}
 	defer fd.Close()

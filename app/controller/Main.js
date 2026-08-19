@@ -100,6 +100,20 @@ Ext.define(
     onLaunch: function () {
         appstate.setInitPhase(true);
 
+		// Administration is hidden by default and only exposed after the
+		// backend confirms an editor or administrator role.
+		Ext.Ajax.request({
+			url: 'backend6/admin/status',
+			method: 'GET',
+			success: function (response) {
+				var data = Ext.decode(response.responseText);
+				if (data.role === 'admin' || data.role === 'editor') {
+					var button = Ext.getCmp('btn_admin_tab');
+					if (button) { button.show(); }
+				}
+			}
+		});
+
         // Determine owner.
         var ownerstore = this.getOwnerStore();
         ownerstore.on('load', this.onOwnerLoaded, this);

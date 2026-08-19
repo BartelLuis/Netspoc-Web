@@ -42,7 +42,8 @@ Ext.define(
                     { xtype : 'serviceview' },
                     { xtype : 'networkview' },
                     { xtype : 'diffview'    },
-                    { xtype : 'accountview' }
+                    { xtype : 'accountview' },
+                    { xtype : 'adminview' }
                 ],
                 tbar   : [
                     {
@@ -73,6 +74,14 @@ Ext.define(
                         iconCls      : 'icon-group',
                         toggleGroup  : 'navGrp',
                         enableToggle : true
+                    },
+                    {
+                        id           : 'btn_admin_tab',
+                        text         : 'Administration',
+                        iconCls      : 'icon-application_form_edit',
+                        toggleGroup  : 'navGrp',
+                        enableToggle : true,
+                        hidden       : true
                     },
                     '->',
                     'Stand',

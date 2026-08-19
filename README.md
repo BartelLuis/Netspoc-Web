@@ -59,6 +59,20 @@ Docker
 The repository contains a multi-stage, non-root production image and a Compose
 setup. The container serves both the web assets and the Go API on port 8080.
 
+The GitHub Actions workflow `.github/workflows/docker.yml` builds the image for
+every pull request. Pushes to `master`, manual workflow runs and tags such as
+`v1.2.0` publish it to:
+
+```text
+ghcr.io/bartelluis/netspoc-web
+```
+
+The default branch also receives the `latest` tag. Version tags additionally
+produce semantic version tags, while every published build receives a
+`sha-...` tag. The workflow uses the repository-provided `GITHUB_TOKEN`; no
+separate registry password is required. Package visibility can be changed in
+the repository's GitHub Packages settings.
+
 1. Put an exported Netspoc policy below `docker/netspoc-data`, or set
    `NETSPOC_DATA` to its host path.
 2. Adjust `docker/policyweb.conf`. Add Fortinet targets as shown above.
@@ -187,6 +201,53 @@ After that, use the one-shot `docker compose run --rm -T create-user ...`
 command above. Do not use a bare `docker exec` against a container created from
 an old image; rebuilding an image does not automatically replace an already
 running container.
+
+### Creating and editing policies in the browser
+
+Open the **Administration** tab in the normal application (or `/admin.html`
+directly) to manage policy source data. The editor supports policy
+versions, local users, owners and administrator assignments, networks and
+hosts, services, and permit/deny rules. **Save draft** keeps editable data
+without changing the active policy; **Publish policy** validates all references
+and creates a new immutable export used by the viewer.
+
+On an empty installation, the administration page runs in bootstrap mode. Add
+at least one user with a password, add an owner, assign the user's email as an
+administrator of that owner, and publish. After the first publish, policy
+administration requires a normal authenticated session.
+
+Editable policy data and publication history are stored in the SQLite database
+`policyweb.sqlite`. The legacy export directories are generated compatibility
+artifacts for the existing viewer. An existing `draft.json` is imported into
+SQLite automatically on first use.
+
+Users have an independent policy role: `viewer` can use the published policy,
+`editor` can change and save drafts and create a diff, and `admin` can also
+confirm that diff and publish it. Owner membership and owner administrators are
+configured separately, so access to a responsibility does not grant policy
+administration rights.
+
+Owners may reference a parent owner. Published parent owners include the
+networks and services of their descendants. Hosts/IP addresses may override the
+network owner. Publishing is always two-step: first create and review the diff,
+then confirm it. The confirmation hash covers both the previous publication and
+the proposed policy, so it becomes invalid after either side changes.
+
+Creating a diff immediately allocates a unique `p...` policy ID and stores the
+full change list as a pending SQLite revision. The Administration page keeps the
+last 50 revisions expandable, including pending and published diffs. An admin
+can reopen and approve a pending revision; approval publishes that exact policy
+ID. Pending revisions based on an older publication must be recreated.
+
+Host names are optional. If omitted, a stable name is generated from the IP
+address (for example `172.25.26.1` becomes `ip-172-25-26-1`). Validation reports
+invalid IPs, invalid names, duplicates, and addresses outside the containing
+network separately.
+
+The `NETSPOC_DATA` directory is writable by the container because it contains
+the database and generated versions. Back it up like the users volume. If an
+existing host directory is mounted, ensure UID/GID used by the `policyweb`
+container can write to it.
 
 ### Assigning responsibilities and networks
 
