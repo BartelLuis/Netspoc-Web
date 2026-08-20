@@ -5,7 +5,8 @@ Ext.define('PolicyWeb.view.Admin', {
         tag: 'iframe',
         src: 'about:blank',
         title: 'Policy Administration',
-        style: 'width:100%;height:100%;border:0;background:#f4f7fa'
+        cls: 'pw-admin-frame',
+        style: 'width:100%;height:100%;border:0'
     },
 
     loadAdmin: function () {

@@ -219,8 +219,31 @@ Ext.define(
         var userstore = this.getUsersStore();
         userstore.on('load',
             function (ustore) {
+                var view = this.getServiceUsersView();
+                var header = view.getView().getHeaderCt().getHeaderAtIndex(0);
+                // A service selection may have changed while the previous
+                // request was still running. Do not expose results belonging
+                // to that previous service while the current request is
+                // queued.
+                if (ustore.policyWebDesiredKey !==
+                    ustore.policyWebRequestKey) {
+                    ustore.removeAll();
+                    if (header) {
+                        header.setText('Name (Anzahl: 0)');
+                    }
+                    this.getUserDetailEmails().clear();
+                    return;
+                }
+
                 // Always select first user object.
-                this.getServiceUsersView().select0();
+                view.select0();
+                if (header) {
+                    header.setText(
+                        'Name (Anzahl: ' + ustore.getCount() + ')');
+                }
+                if (ustore.getCount() === 0) {
+                    this.getUserDetailEmails().clear();
+                }
             },
             this
         );
@@ -340,6 +363,92 @@ Ext.define(
         store.load({ params: params });
     },
 
+    getServiceDataParams: function () {
+        var params = this.getCheckboxParams();
+        var relation = this.getCurrentRelation();
+        // The buttons "Eigene", "Genutzte" and "Nutzbare" have a
+        // relation attribute. Only the search button has none.
+        if (typeof relation === 'undefined' && params.filter_rules === 1) {
+            params = Ext.merge(params, this.getSearchParams());
+        }
+        return params;
+    },
+
+    loadSelectedServiceUsers: function (serviceName, params, force) {
+        var store = this.getUsersStore();
+        var name = arguments.length > 0 ?
+            serviceName : this.getSelectedServiceName();
+
+        if (!name) {
+            store.policyWebDesiredKey = null;
+            store.policyWebQueuedLoad = null;
+            store.policyWebLoadedKey = null;
+            store.removeAll();
+            this.getUserDetailEmails().clear();
+            return;
+        }
+
+        params = Ext.merge({}, params || this.getServiceDataParams());
+        // Pass the complete request context explicitly. This keeps lastOptions
+        // useful and prevents a mutable proxy.extraParams object from binding
+        // a response to a service selected later.
+        params.service = name;
+        params.active_owner = appstate.getOwner();
+        params.history = appstate.getHistory();
+        params.chosen_networks = appstate.getNetworks();
+
+        var key = JSON.stringify(params);
+        store.policyWebDesiredKey = key;
+
+        if (!force && store.policyWebLoadedKey === key) {
+            return;
+        }
+        if (store.isLoading()) {
+            if (store.policyWebRequestKey !== key) {
+                // Store.load does not discard an older Ajax response. Queue
+                // the newest selection so requests cannot overwrite each
+                // other out of order.
+                store.policyWebQueuedLoad = {
+                    name: name,
+                    params: params,
+                    key: key
+                };
+                store.removeAll();
+                this.getUserDetailEmails().clear();
+            }
+            return;
+        }
+
+        store.policyWebQueuedLoad = null;
+        store.policyWebRequestKey = key;
+        store.getProxy().extraParams.service = name;
+        store.load({
+            params: params,
+            scope: this,
+            callback: function (records, operation, success) {
+                var requestedKey = store.policyWebRequestKey;
+                store.policyWebRequestKey = null;
+                if (success && store.policyWebDesiredKey === requestedKey) {
+                    store.policyWebLoadedKey = requestedKey;
+                }
+                else if (store.policyWebDesiredKey === requestedKey) {
+                    store.policyWebLoadedKey = null;
+                }
+
+                var queued = store.policyWebQueuedLoad;
+                store.policyWebQueuedLoad = null;
+                if (queued && queued.key === store.policyWebDesiredKey) {
+                    this.loadSelectedServiceUsers(
+                        queued.name, queued.params, true);
+                }
+                else if (store.policyWebDesiredKey !== requestedKey) {
+                    store.removeAll();
+                    this.getUserDetailEmails().clear();
+                }
+            }
+        });
+    },
+
     onServiceSelected: function (rowmodel, service, index, eOpts) {
         // Load details, rules and emails of owners
         // for selected service.
@@ -413,24 +522,11 @@ Ext.define(
         // Load rules.
         var rules_store = this.getRulesStore();
         rules_store.getProxy().extraParams.service = name;
-        var params = this.getCheckboxParams();
-        var relation = this.getCurrentRelation();
-        // The buttons "Eigene", "Genutzte" and "Nutzbare"
-        // have a relation attribute. The only one without this
-        // attribute is the search button and relation will
-        // be undefined, so we merge in the search parameters.
-        if (typeof relation === 'undefined' && params.filter_rules === 1) {
-            params = Ext.merge(
-                params,
-                this.getSearchParams()
-            );
-        }
+        var params = this.getServiceDataParams();
         rules_store.load({ params: params });
 
         // Load users.
-        var user_store = this.getUsersStore();
-        user_store.getProxy().extraParams.service = name;
-        user_store.load({ params: params });
+        this.loadSelectedServiceUsers(name, params, true);
     },
 
     onTriggerClick: function () {
@@ -459,7 +555,7 @@ Ext.define(
         trigger.hide();
         trigger.ownerCt.doLayout();
         this.getRulesStore().removeAll();
-        this.getUsersStore().removeAll();
+        this.loadSelectedServiceUsers(null);
         this.getOwnerEmails().clear();
         this.getUserDetailEmails().clear();
     },
@@ -638,7 +734,7 @@ Ext.define(
 
     getCurrentRelation: function () {
         var b = this.getCurrentlyPressedServiceButton();
-        return b.relation;
+        return b ? b.relation : undefined;
     },
 
     getCurrentlyPressedServiceButton: function () {
@@ -733,7 +829,9 @@ Ext.define(
 
             // Highlight "Suche"-button
             var b = this.getCurrentlyPressedServiceButton();
-            b.toggle(false);
+            if (b && b !== sb) {
+                b.toggle(false);
+            }
             sb.toggle(true);
 
             params.relation = '';
@@ -761,23 +859,19 @@ Ext.define(
     },
 
     onServiceDetailsButtonClick: function (button, event, eOpts) {
-        // We have two buttons: "Details zum Dienst"
-        // and "Benutzer (User) des Dienstes".
-        // index: 0 = service details
-        //        1 = vertical separator
-        //        2 = service User
         var card = this.getDetailsAndUserView();
-        var index = button.ownerCt.items.indexOf(button);
-        var active_idx = card.items.indexOf(card.layout.activeItem);
+        var itemId = button.serviceCardItemId;
+        var target = itemId ? card.getComponent(itemId) : null;
+        if (!target) {
+            return;
+        }
+        var showUsers = itemId === 'service-users-card';
 
         // Only enable filter checkbox if we are in search mode
         // (relation is undefined).
         var filter = this.getCurrentRelation() === undefined ? 1 : 0;
 
-        if (index === 2) {
-            // This is necessary because the vertical separator
-            // between the two buttons has an index, too.
-            index = index - 1;
+        if (showUsers) {
             this.enableAndDisableCheckboxes(
                 {
                     'filter_rules': filter
@@ -787,6 +881,9 @@ Ext.define(
                     'display_property': 1
                 }
             );
+            // A failed or discarded request is retried when the user opens
+            // the tab. An already loaded/current request is reused.
+            this.loadSelectedServiceUsers();
         }
         else {
             this.enableCheckboxes(
@@ -797,17 +894,18 @@ Ext.define(
                 }
             );
         }
-        if (index === active_idx) {
-            button.toggle();
-            return;
+        if (card.layout.activeItem !== target) {
+            card.layout.setActiveItem(target);
         }
-        card.layout.setActiveItem(index);
+        if (!button.pressed) {
+            button.toggle(true);
+        }
     },
 
     enableAndDisableCheckboxes: function (to_enable, to_disable) {
         var card = this.getDetailsAndUserView();
-        var active_idx = card.items.indexOf(card.layout.activeItem);
-        if (active_idx > 0) {
+        var usersCard = card.getComponent('service-users-card');
+        if (card.layout.activeItem === usersCard) {
             this.disableAllCheckboxes();
         }
         else {
@@ -917,6 +1015,7 @@ Ext.define(
 
     onCheckboxChange: function (checkbox, newVal, oldVal, eOpts) {
         var params;
+        var relation = this.getCurrentRelation();
         var srv_store = this.getServiceStore();
         if (srv_store.getTotalCount() > 0) {
             params = this.getCheckboxParams(checkbox, newVal);
@@ -938,8 +1037,8 @@ Ext.define(
             }
             rules.model.setFields(fields);
             rules.load({ params: params });
-            var users = this.getUsersStore();
-            users.load({ params: params });
+            this.loadSelectedServiceUsers(
+                this.getSelectedServiceName(), params, true);
         }
         if (Ext.isObject(print_window)) {
             this.onShowAllServices(print_window);

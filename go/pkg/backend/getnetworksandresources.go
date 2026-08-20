@@ -8,6 +8,9 @@ import (
 )
 
 func (s *state) getNetworks(w http.ResponseWriter, r *http.Request) {
+	if !s.requireOwnerAccess(w, r, requestedActiveOwner(r)) {
+		return
+	}
 	networks := s.generateNetworks(r)
 	writeRecords(w, networks)
 }
@@ -102,12 +105,18 @@ func selectedNetworks(selected string, a *assets) []string {
 }
 
 func (s *state) getNetworkResources(w http.ResponseWriter, r *http.Request) {
+	if !s.requireOwnerAccess(w, r, requestedActiveOwner(r)) {
+		return
+	}
 	selected := r.FormValue("selected_networks")
 	result := s.getNetworkResourcesForNetworks(r, selected)
 	writeRecords(w, result)
 }
 
 func (s *state) getNetworksAndResources(w http.ResponseWriter, r *http.Request) {
+	if !s.requireOwnerAccess(w, r, requestedActiveOwner(r)) {
+		return
+	}
 	var result []jsonMap
 	networks := s.generateNetworks(r)
 	netsAsCSV := ""

@@ -134,6 +134,9 @@ func (d *diffState) diffObject(name string) bool {
 		if df := compareString(a.IP6, b.IP6); df != "" {
 			m["ip6"] = df
 		}
+		if df := compareString(a.FQDN, b.FQDN); df != "" {
+			m["fqdn"] = df
+		}
 		if df := compareString(a.Owner, b.Owner); df != "" {
 			m["owner"] = df
 		}

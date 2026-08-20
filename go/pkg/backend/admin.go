@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -22,15 +22,18 @@ type editablePolicy struct {
 	Owners   []editableOwner   `json:"owners"`
 	Users    []editableUser    `json:"users"`
 	Networks []editableNetwork `json:"networks"`
+	FQDNs    []editableFQDN    `json:"fqdns"`
 	Services []editableService `json:"services"`
 }
 
 type editableOwner struct {
-	Name     string   `json:"name"`
-	Parent   string   `json:"parent,omitempty"`
-	Users    []string `json:"users,omitempty"`
-	Admins   []string `json:"admins"`
-	Watchers []string `json:"watchers"`
+	Name       string   `json:"name"`
+	Parent     string   `json:"parent,omitempty"`
+	ReadAll    bool     `json:"read_all,omitempty"`
+	ReadOwners []string `json:"read_owners,omitempty"`
+	Users      []string `json:"users,omitempty"`
+	Admins     []string `json:"admins"`
+	Watchers   []string `json:"watchers"`
 }
 
 type editableUser struct {
@@ -52,6 +55,12 @@ type editableHost struct {
 	Owner string `json:"owner,omitempty"`
 }
 
+type editableFQDN struct {
+	Name  string `json:"name"`
+	FQDN  string `json:"fqdn"`
+	Owner string `json:"owner"`
+}
+
 type editableService struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
@@ -61,6 +70,7 @@ type editableService struct {
 
 type editableRule struct {
 	Action       string   `json:"action"`
+	HasUser      string   `json:"has_user"`
 	Sources      []string `json:"sources"`
 	Destinations []string `json:"destinations"`
 	Protocols    []string `json:"protocols"`
@@ -78,7 +88,9 @@ func (s *state) adminStatus(w http.ResponseWriter, r *http.Request) {
 		result["role"] = role
 		if role == "admin" || role == "editor" {
 			result["policy"] = p
-			if revisions, err := s.listRevisions(); err == nil { result["revisions"] = revisions }
+			if revisions, err := s.listRevisions(); err == nil {
+				result["revisions"] = revisions
+			}
 		}
 	}
 	writeJSON(w, result)
@@ -141,7 +153,10 @@ func (s *state) adminDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	baseVersion, err := s.latestPublicationVersion()
-	if err != nil { writeError(w, err.Error(), http.StatusInternalServerError); return }
+	if err != nil {
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	version := newPolicyVersion()
 	changes := diffPolicies(previous, p)
 	hash, err := approvalHash(version, previous, p)
@@ -150,7 +165,8 @@ func (s *state) adminDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.storeRevision(version, baseVersion, p, changes); err != nil {
-		writeError(w, err.Error(), http.StatusInternalServerError); return
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	writeJSON(w, map[string]any{"success": true, "policy_id": version, "approval": hash, "changes": changes})
 }
@@ -163,23 +179,37 @@ func (s *state) adminPublish(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var request struct {
-		PolicyID string         `json:"policy_id"`
-		Approval string         `json:"approval"`
+		PolicyID string `json:"policy_id"`
+		Approval string `json:"approval"`
 	}
 	err := json.NewDecoder(io.LimitReader(r.Body, 2<<20)).Decode(&request)
 	var revision *editablePolicy
 	var revisionBase string
-	if err == nil && request.PolicyID == "" { err = errors.New("policy_id is required") }
-	if err == nil { revision, revisionBase, err = s.loadRevision(request.PolicyID) }
+	if err == nil && request.PolicyID == "" {
+		err = errors.New("policy_id is required")
+	}
+	if err == nil {
+		revision, revisionBase, err = s.loadRevision(request.PolicyID)
+	}
 	p := revision
-	if err == nil { err = validateEditablePolicy(p) }
+	if err == nil {
+		err = validateEditablePolicy(p)
+	}
 	previous, previousErr := s.latestPublication()
-	if err == nil && previousErr != nil { err = previousErr }
+	if err == nil && previousErr != nil {
+		err = previousErr
+	}
 	currentBase, baseErr := s.latestPublicationVersion()
-	if err == nil && baseErr != nil { err = baseErr }
-	if err == nil && revisionBase != currentBase { err = errors.New("the base policy changed; create a new diff") }
+	if err == nil && baseErr != nil {
+		err = baseErr
+	}
+	if err == nil && revisionBase != currentBase {
+		err = errors.New("the base policy changed; create a new diff")
+	}
 	var hash string
-	if err == nil { hash, err = approvalHash(request.PolicyID, previous, p) }
+	if err == nil {
+		hash, err = approvalHash(request.PolicyID, previous, p)
+	}
 	if err == nil && (request.Approval == "" || request.Approval != hash) {
 		err = errors.New("policy changed after diff approval; create and confirm a new diff")
 	}
@@ -199,18 +229,30 @@ func (s *state) adminPublish(w http.ResponseWriter, r *http.Request) {
 func (s *state) adminRevision(w http.ResponseWriter, r *http.Request) {
 	current := s.readDraft()
 	if !hasPolicyRole(current, getEmailFromSession(r), "admin", "editor") {
-		writeError(w, "Policy editor role required", http.StatusForbidden); return
+		writeError(w, "Policy editor role required", http.StatusForbidden)
+		return
 	}
 	version := r.FormValue("policy_id")
 	p, base, err := s.loadRevision(version)
 	currentBase, baseErr := s.latestPublicationVersion()
-	if err == nil && baseErr != nil { err = baseErr }
-	if err == nil && base != currentBase { err = errors.New("the base policy changed; create a new diff") }
+	if err == nil && baseErr != nil {
+		err = baseErr
+	}
+	if err == nil && base != currentBase {
+		err = errors.New("the base policy changed; create a new diff")
+	}
 	previous, previousErr := s.latestPublication()
-	if err == nil && previousErr != nil { err = previousErr }
+	if err == nil && previousErr != nil {
+		err = previousErr
+	}
 	var approval string
-	if err == nil { approval, err = approvalHash(version, previous, p) }
-	if err != nil { writeError(w, err.Error(), http.StatusBadRequest); return }
+	if err == nil {
+		approval, err = approvalHash(version, previous, p)
+	}
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	writeJSON(w, map[string]any{"success": true, "policy_id": version, "policy": p, "approval": approval, "changes": diffPolicies(previous, p)})
 }
 
@@ -218,8 +260,12 @@ func policyRole(p *editablePolicy, email string) string {
 	email = strings.ToLower(email)
 	for i, user := range p.Users {
 		if strings.ToLower(user.Email) == email {
-			if user.Role == "" && i == 0 { return "admin" }
-			if user.Role == "" { return "viewer" }
+			if user.Role == "" && i == 0 {
+				return "admin"
+			}
+			if user.Role == "" {
+				return "viewer"
+			}
 			return user.Role
 		}
 	}
@@ -242,23 +288,32 @@ func decodePolicy(r *http.Request) (*editablePolicy, error) {
 }
 
 func validateEditablePolicy(p *editablePolicy) error {
+	normalizeEditablePolicy(p)
 	if !policyNameRE.MatchString(p.Name) {
 		return errors.New("policy name is required and may contain letters, digits, '.', '_', ':' and '-'")
 	}
 	owners := map[string]bool{}
 	users := map[string]bool{}
 	objects := map[string]bool{}
-	for _, o := range p.Owners {
+	for i := range p.Owners {
+		o := &p.Owners[i]
 		if !policyNameRE.MatchString(o.Name) || owners[o.Name] {
 			return fmt.Errorf("invalid or duplicate owner %q", o.Name)
 		}
 		owners[o.Name] = true
+		for j := range o.ReadOwners {
+			o.ReadOwners[j] = strings.TrimSpace(o.ReadOwners[j])
+		}
 	}
 	for i := range p.Users {
 		p.Users[i].Email = strings.ToLower(strings.TrimSpace(p.Users[i].Email))
 		email := p.Users[i].Email
 		if p.Users[i].Role == "" {
-			if i == 0 { p.Users[i].Role = "admin" } else { p.Users[i].Role = "viewer" }
+			if i == 0 {
+				p.Users[i].Role = "admin"
+			} else {
+				p.Users[i].Role = "viewer"
+			}
 		}
 		if !slices.Contains([]string{"admin", "editor", "viewer"}, p.Users[i].Role) {
 			return fmt.Errorf("user %q has invalid role %q", email, p.Users[i].Role)
@@ -296,8 +351,14 @@ func validateEditablePolicy(p *editablePolicy) error {
 		return errors.New("at least one owner administrator is required")
 	}
 	hasPolicyAdmin := false
-	for _, user := range p.Users { if user.Role == "admin" { hasPolicyAdmin = true } }
-	if !hasPolicyAdmin { return errors.New("at least one policy administrator is required") }
+	for _, user := range p.Users {
+		if user.Role == "admin" {
+			hasPolicyAdmin = true
+		}
+	}
+	if !hasPolicyAdmin {
+		return errors.New("at least one policy administrator is required")
+	}
 	for _, owner := range p.Owners {
 		if owner.Parent != "" && !owners[owner.Parent] {
 			return fmt.Errorf("owner %q references unknown parent %q", owner.Name, owner.Parent)
@@ -305,11 +366,32 @@ func validateEditablePolicy(p *editablePolicy) error {
 		seen := map[string]bool{owner.Name: true}
 		parent := owner.Parent
 		for parent != "" {
-			if seen[parent] { return fmt.Errorf("owner hierarchy contains a cycle at %q", parent) }
+			if seen[parent] {
+				return fmt.Errorf("owner hierarchy contains a cycle at %q", parent)
+			}
 			seen[parent] = true
 			for _, candidate := range p.Owners {
-				if candidate.Name == parent { parent = candidate.Parent; break }
+				if candidate.Name == parent {
+					parent = candidate.Parent
+					break
+				}
 			}
+		}
+		readOwners := map[string]bool{}
+		for _, readable := range owner.ReadOwners {
+			if readable == "" {
+				return fmt.Errorf("owner %q contains an empty readable owner", owner.Name)
+			}
+			if readable == owner.Name {
+				return fmt.Errorf("owner %q must not grant read access to itself", owner.Name)
+			}
+			if !owners[readable] {
+				return fmt.Errorf("owner %q references unknown readable owner %q", owner.Name, readable)
+			}
+			if readOwners[readable] {
+				return fmt.Errorf("owner %q contains duplicate readable owner %q", owner.Name, readable)
+			}
+			readOwners[readable] = true
 		}
 	}
 	for i := range p.Networks {
@@ -328,19 +410,53 @@ func validateEditablePolicy(p *editablePolicy) error {
 		for j := range p.Networks[i].Hosts {
 			h := &p.Networks[i].Hosts[j]
 			h.IP = strings.TrimSpace(h.IP)
-			if h.IP == "" { return fmt.Errorf("network %q contains a host without an IP address", n.Name) }
-			if h.Name == "" { h.Name = hostNameFromIP(h.IP) }
-			if h.Owner == "" { return fmt.Errorf("host %q requires an explicit owner", h.Name) }
-			if !owners[h.Owner] { return fmt.Errorf("host %q references unknown owner %q", h.Name, h.Owner) }
+			if h.IP == "" {
+				return fmt.Errorf("network %q contains a host without an IP address", n.Name)
+			}
+			if h.Name == "" {
+				h.Name = hostNameFromIP(h.IP)
+			}
+			if h.Owner == "" {
+				return fmt.Errorf("host %q requires an explicit owner", h.Name)
+			}
+			if !owners[h.Owner] {
+				return fmt.Errorf("host %q references unknown owner %q", h.Name, h.Owner)
+			}
 			hostIP := net.ParseIP(h.IP)
-			if hostIP == nil { return fmt.Errorf("host %q has invalid IP address %q", h.Name, h.IP) }
-			if !policyNameRE.MatchString(h.Name) { return fmt.Errorf("host name %q is invalid", h.Name) }
-			if objects["host:"+h.Name] { return fmt.Errorf("duplicate host name %q", h.Name) }
+			if hostIP == nil {
+				return fmt.Errorf("host %q has invalid IP address %q", h.Name, h.IP)
+			}
+			if !policyNameRE.MatchString(h.Name) {
+				return fmt.Errorf("host name %q is invalid", h.Name)
+			}
+			if objects["host:"+h.Name] {
+				return fmt.Errorf("duplicate host name %q", h.Name)
+			}
 			if !ipNet.Contains(hostIP) {
 				return fmt.Errorf("host %q is outside network %q", h.Name, n.Name)
 			}
 			objects["host:"+h.Name] = true
 		}
+	}
+	fqdnValues := map[string]bool{}
+	for i := range p.FQDNs {
+		f := &p.FQDNs[i]
+		if !policyNameRE.MatchString(f.Name) || objects["fqdn:"+f.Name] {
+			return fmt.Errorf("invalid or duplicate FQDN object %q", f.Name)
+		}
+		if !owners[f.Owner] {
+			return fmt.Errorf("FQDN object %q references unknown owner %q", f.Name, f.Owner)
+		}
+		fqdn, err := canonicalFQDN(f.FQDN)
+		if err != nil {
+			return fmt.Errorf("FQDN object %q has invalid FQDN %q: %w", f.Name, f.FQDN, err)
+		}
+		if fqdnValues[fqdn] {
+			return fmt.Errorf("duplicate FQDN %q", fqdn)
+		}
+		f.FQDN = fqdn
+		fqdnValues[fqdn] = true
+		objects["fqdn:"+f.Name] = true
 	}
 	services := map[string]bool{}
 	for _, svc := range p.Services {
@@ -360,10 +476,21 @@ func validateEditablePolicy(p *editablePolicy) error {
 			if rule.Action != "permit" && rule.Action != "deny" {
 				return fmt.Errorf("service %q rule action must be permit or deny", svc.Name)
 			}
+			if !slices.Contains([]string{"src", "dst", "both", "none"}, rule.HasUser) {
+				return fmt.Errorf("service %q rule has invalid user side %q", svc.Name, rule.HasUser)
+			}
 			if len(rule.Sources) == 0 || len(rule.Destinations) == 0 || len(rule.Protocols) == 0 {
 				return fmt.Errorf("service %q rules require source, destination and protocol", svc.Name)
 			}
-			for _, ref := range append(slices.Clone(rule.Sources), rule.Destinations...) {
+			for _, ref := range rule.Sources {
+				if strings.HasPrefix(ref, "fqdn:") {
+					return fmt.Errorf("service %q may only use FQDN object %q as a destination", svc.Name, ref)
+				}
+				if !objects[ref] {
+					return fmt.Errorf("service %q references unknown object %q", svc.Name, ref)
+				}
+			}
+			for _, ref := range rule.Destinations {
 				if !objects[ref] {
 					return fmt.Errorf("service %q references unknown object %q", svc.Name, ref)
 				}
@@ -378,30 +505,105 @@ func hostNameFromIP(ip string) string {
 	return "ip-" + replacer.Replace(strings.TrimSpace(ip))
 }
 
+func canonicalFQDN(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.TrimSuffix(value, ".")
+	if len(value) == 0 || len(value) > 253 || !strings.Contains(value, ".") || net.ParseIP(value) != nil {
+		return "", errors.New("expected a fully-qualified DNS name")
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) == 0 || len(label) > 63 {
+			return "", errors.New("DNS labels must contain between 1 and 63 characters")
+		}
+		for i, char := range label {
+			isAlphaNumeric := char >= 'a' && char <= 'z' || char >= '0' && char <= '9'
+			if !isAlphaNumeric && (char != '-' || i == 0 || i == len(label)-1) {
+				return "", errors.New("DNS labels may only contain letters, digits and interior hyphens")
+			}
+		}
+	}
+	return value, nil
+}
+
+func ownerIsWithin(ownerByName map[string]editableOwner, child, ancestor string) bool {
+	seen := map[string]bool{}
+	for child != "" && !seen[child] {
+		if child == ancestor {
+			return true
+		}
+		seen[child] = true
+		owner, ok := ownerByName[child]
+		if !ok {
+			return false
+		}
+		child = owner.Parent
+	}
+	return false
+}
+
+// ownerScopeContains reports whether target is part of reader's effective
+// view. Explicit grants include the target's regular hierarchy descendants,
+// but deliberately do not follow any read grants configured on that target.
+func ownerScopeContains(ownerByName map[string]editableOwner, reader, target string) bool {
+	if ownerIsWithin(ownerByName, target, reader) {
+		return true
+	}
+	readerOwner, ok := ownerByName[reader]
+	if !ok {
+		return false
+	}
+	if readerOwner.ReadAll {
+		return true
+	}
+	for _, readable := range readerOwner.ReadOwners {
+		if ownerIsWithin(ownerByName, target, readable) {
+			return true
+		}
+	}
+	return false
+}
+
 func approvalHash(policyID string, previous, next *editablePolicy) (string, error) {
 	data, err := json.Marshal(struct {
 		PolicyID string          `json:"policy_id"`
 		Previous *editablePolicy `json:"previous"`
 		Next     *editablePolicy `json:"next"`
 	}{policyID, previous, next})
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
 }
 
 func diffPolicies(old, next *editablePolicy) []map[string]string {
 	result := []map[string]string{}
 	diffNamed := func(kind string, oldItems, newItems any) {
-		oldMap := namedItems(oldItems); newMap := namedItems(newItems)
+		oldMap := namedItems(oldItems)
+		newMap := namedItems(newItems)
 		for name, item := range newMap {
 			change := "added"
-			if previous, ok := oldMap[name]; ok { if reflect.DeepEqual(previous, item) { continue }; change = "changed" }
+			if previous, ok := oldMap[name]; ok {
+				if reflect.DeepEqual(previous, item) {
+					continue
+				}
+				change = "changed"
+			}
 			result = append(result, map[string]string{"type": kind, "name": name, "change": change})
 		}
-		for name := range oldMap { if _, ok := newMap[name]; !ok { result = append(result, map[string]string{"type": kind, "name": name, "change": "removed"}) } }
+		for name := range oldMap {
+			if _, ok := newMap[name]; !ok {
+				result = append(result, map[string]string{"type": kind, "name": name, "change": "removed"})
+			}
+		}
 	}
-	if old == nil { old = &editablePolicy{} }
-	diffNamed("user", old.Users, next.Users); diffNamed("owner", old.Owners, next.Owners)
-	diffNamed("network", old.Networks, next.Networks); diffNamed("service", old.Services, next.Services)
+	if old == nil {
+		old = &editablePolicy{}
+	}
+	diffNamed("user", old.Users, next.Users)
+	diffNamed("owner", old.Owners, next.Owners)
+	diffNamed("network", old.Networks, next.Networks)
+	diffNamed("fqdn", old.FQDNs, next.FQDNs)
+	diffNamed("service", old.Services, next.Services)
 	slices.SortFunc(result, func(a, b map[string]string) int { return strings.Compare(a["type"]+a["name"], b["type"]+b["name"]) })
 	return result
 }
@@ -413,7 +615,9 @@ func namedItems(items any) map[string]any {
 	_ = json.Unmarshal(data, &values)
 	for _, value := range values {
 		name, _ := value["name"].(string)
-		if name == "" { name, _ = value["email"].(string) }
+		if name == "" {
+			name, _ = value["email"].(string)
+		}
 		result[name] = value
 	}
 	return result
@@ -455,6 +659,7 @@ func newPolicyVersion() string {
 }
 
 func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
+	normalizeEditablePolicy(p)
 	for _, u := range p.Users {
 		if u.Password != "" {
 			if err := SetUserPassword(s.config.UserDir, u.Email, u.Password); err != nil {
@@ -465,20 +670,23 @@ func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
 		}
 	}
 	dir := filepath.Join(s.config.NetspocData, version)
-	if err := os.MkdirAll(filepath.Join(dir, "owner"), 0750); err != nil { return err }
+	if err := os.MkdirAll(filepath.Join(dir, "owner"), 0750); err != nil {
+		return err
+	}
 	emails := map[string][]string{}
 	objects := map[string]any{}
 	services := map[string]any{}
 	ownerServices := map[string][]string{}
 	ownerNetworks := map[string][]string{}
+	ownerFQDNs := map[string][]string{}
+	objectOwners := map[string]string{}
+	ownerServiceUsers := map[string]map[string][]string{}
 	networkChildren := map[string][]string{}
 	networkOwner := map[string]string{}
 	hostOwnerByName := map[string]string{}
 	ownerByName := map[string]editableOwner{}
-	for _, o := range p.Owners { ownerByName[o.Name] = o }
-	isWithin := func(child, ancestor string) bool {
-		for child != "" { if child == ancestor { return true }; child = ownerByName[child].Parent }
-		return false
+	for _, o := range p.Owners {
+		ownerByName[o.Name] = o
 	}
 	for _, child := range p.Owners {
 		// Membership in an ancestor grants read access to every descendant.
@@ -489,15 +697,21 @@ func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
 			}
 		}
 	}
+	for email, authorizedOwners := range emails {
+		slices.Sort(authorizedOwners)
+		emails[email] = slices.Compact(authorizedOwners)
+	}
 	for _, n := range p.Networks {
 		key := "network:" + n.Name
 		objects[key] = map[string]any{"ip": n.CIDR, "zone": "", "owner": n.Owner}
+		objectOwners[key] = n.Owner
 		networkOwner[key] = n.Owner
 		ownerNetworks[n.Owner] = append(ownerNetworks[n.Owner], key)
 		for _, h := range n.Hosts {
 			hostOwner := h.Owner
-			name := "host:"+h.Name
+			name := "host:" + h.Name
 			objects[name] = map[string]any{"ip": h.IP, "zone": "", "owner": hostOwner}
+			objectOwners[name] = hostOwner
 			networkChildren[key] = append(networkChildren[key], name)
 			hostOwnerByName[name] = hostOwner
 			// A responsibility owning an address needs its containing network in
@@ -505,69 +719,164 @@ func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
 			ownerNetworks[hostOwner] = append(ownerNetworks[hostOwner], key)
 		}
 	}
+	for _, f := range p.FQDNs {
+		name := "fqdn:" + f.Name
+		objects[name] = map[string]any{"fqdn": f.FQDN, "zone": "", "owner": f.Owner}
+		objectOwners[name] = f.Owner
+		ownerFQDNs[f.Owner] = append(ownerFQDNs[f.Owner], name)
+	}
 	for _, svc := range p.Services {
 		rules := []map[string]any{}
-		for _, rule := range svc.Rules { rules = append(rules, map[string]any{"action": rule.Action, "src": rule.Sources, "dst": rule.Destinations, "prt": rule.Protocols, "has_user": ""}) }
+		for _, rule := range svc.Rules {
+			exportedHasUser := rule.HasUser
+			if exportedHasUser == "none" {
+				exportedHasUser = ""
+			}
+			rules = append(rules, map[string]any{"action": rule.Action, "src": rule.Sources, "dst": rule.Destinations, "prt": rule.Protocols, "has_user": exportedHasUser})
+
+			userObjects := []string{}
+			switch rule.HasUser {
+			case "src":
+				userObjects = rule.Sources
+			case "dst":
+				userObjects = rule.Destinations
+			case "both":
+				userObjects = slices.Concat(slices.Clone(rule.Sources), rule.Destinations)
+			}
+			for _, objectName := range userObjects {
+				owner := objectOwners[objectName]
+				if ownerServiceUsers[owner] == nil {
+					ownerServiceUsers[owner] = map[string][]string{}
+				}
+				ownerServiceUsers[owner][svc.Name] = append(ownerServiceUsers[owner][svc.Name], objectName)
+			}
+		}
 		services[svc.Name] = map[string]any{"Details": map[string]any{"Description": svc.Description, "Owner": svc.Owners}, "Rules": rules}
-		for _, owner := range svc.Owners { ownerServices[owner] = append(ownerServices[owner], svc.Name) }
+		for _, owner := range svc.Owners {
+			ownerServices[owner] = append(ownerServices[owner], svc.Name)
+		}
 	}
-	if err := writeJSONFile(filepath.Join(dir, "email"), emails); err != nil { return err }
-	if err := writeJSONFile(filepath.Join(dir, "objects"), objects); err != nil { return err }
-	if err := writeJSONFile(filepath.Join(dir, "services"), services); err != nil { return err }
+	if err := writeJSONFile(filepath.Join(dir, "email"), emails); err != nil {
+		return err
+	}
+	if err := writeJSONFile(filepath.Join(dir, "objects"), objects); err != nil {
+		return err
+	}
+	if err := writeJSONFile(filepath.Join(dir, "services"), services); err != nil {
+		return err
+	}
 	// The legacy reader uses the first token in POLICY as the directory key,
 	// not merely as a display name. It must therefore match the generated
 	// version directory exactly.
-	if err := os.WriteFile(filepath.Join(dir, "POLICY"), []byte("# "+version+" #\n"), 0640); err != nil { return err }
+	if err := os.WriteFile(filepath.Join(dir, "POLICY"), []byte("# "+version+" #\n"), 0640); err != nil {
+		return err
+	}
 	for _, o := range p.Owners {
 		od := filepath.Join(dir, "owner", o.Name)
-		if err := os.MkdirAll(od, 0750); err != nil { return err }
+		if err := os.MkdirAll(od, 0750); err != nil {
+			return err
+		}
 		effectiveServices := []string{}
+		effectiveUserServices := []string{}
+		effectiveUsers := map[string][]string{}
 		effectiveNetworks := []string{}
-		for child, names := range ownerServices { if isWithin(child, o.Name) { effectiveServices = append(effectiveServices, names...) } }
-		for child, names := range ownerNetworks { if isWithin(child, o.Name) { effectiveNetworks = append(effectiveNetworks, names...) } }
-		slices.Sort(effectiveServices); effectiveServices = slices.Compact(effectiveServices)
-		slices.Sort(effectiveNetworks); effectiveNetworks = slices.Compact(effectiveNetworks)
+		effectiveFQDNs := []string{}
+		for child, names := range ownerServices {
+			if ownerScopeContains(ownerByName, o.Name, child) {
+				effectiveServices = append(effectiveServices, names...)
+			}
+		}
+		for child, names := range ownerNetworks {
+			if ownerScopeContains(ownerByName, o.Name, child) {
+				effectiveNetworks = append(effectiveNetworks, names...)
+			}
+		}
+		for child, names := range ownerFQDNs {
+			if ownerScopeContains(ownerByName, o.Name, child) {
+				effectiveFQDNs = append(effectiveFQDNs, names...)
+			}
+		}
+		for child, serviceUsers := range ownerServiceUsers {
+			if !ownerScopeContains(ownerByName, o.Name, child) {
+				continue
+			}
+			for serviceName, objectNames := range serviceUsers {
+				effectiveUsers[serviceName] = append(effectiveUsers[serviceName], objectNames...)
+			}
+		}
+		for serviceName, objectNames := range effectiveUsers {
+			slices.Sort(objectNames)
+			effectiveUsers[serviceName] = slices.Compact(objectNames)
+			effectiveUserServices = append(effectiveUserServices, serviceName)
+		}
+		slices.Sort(effectiveServices)
+		effectiveServices = slices.Compact(effectiveServices)
+		slices.Sort(effectiveUserServices)
+		slices.Sort(effectiveNetworks)
+		effectiveNetworks = slices.Compact(effectiveNetworks)
+		slices.Sort(effectiveFQDNs)
+		effectiveFQDNs = slices.Compact(effectiveFQDNs)
 		extendedBy := []map[string]string{}
-		if o.Parent != "" { extendedBy = append(extendedBy, map[string]string{"Name": o.Parent}) }
+		if o.Parent != "" {
+			extendedBy = append(extendedBy, map[string]string{"Name": o.Parent})
+		}
 		files := map[string]any{
-			"assets": map[string]any{"anys": map[string]any{"all": map[string]any{"networks": map[string]any{}}}}, "nat_set": []string{},
-			"users": map[string][]string{}, "service_lists": map[string]any{"Owner": effectiveServices, "User": []string{}, "Visible": []string{}},
+			"assets": map[string]any{"anys": map[string]any{"all": map[string]any{"networks": map[string]any{}, "fqdns": effectiveFQDNs}}}, "nat_set": []string{},
+			"users": effectiveUsers, "service_lists": map[string]any{"Owner": effectiveServices, "User": effectiveUserServices, "Visible": []string{}},
 			"emails": emailEntries(o.Admins), "watchers": emailEntries(o.Watchers), "extended_by": extendedBy,
 		}
 		nets := files["assets"].(map[string]any)["anys"].(map[string]any)["all"].(map[string]any)["networks"].(map[string]any)
 		for _, name := range effectiveNetworks {
 			children := []string{}
 			for _, child := range networkChildren[name] {
-				if isWithin(hostOwnerByName[child], o.Name) || isWithin(networkOwner[name], o.Name) {
+				if ownerScopeContains(ownerByName, o.Name, hostOwnerByName[child]) || ownerScopeContains(ownerByName, o.Name, networkOwner[name]) {
 					children = append(children, child)
 				}
 			}
 			nets[name] = children
 		}
-		for name, value := range files { if err := writeJSONFile(filepath.Join(od, name), value); err != nil { return err } }
+		for name, value := range files {
+			if err := writeJSONFile(filepath.Join(od, name), value); err != nil {
+				return err
+			}
+		}
 	}
-	if err := s.saveDraft(p); err != nil { return err }
+	if err := s.saveDraft(p); err != nil {
+		return err
+	}
 	tmp := filepath.Join(s.config.NetspocData, ".current-"+version)
 	_ = os.Remove(tmp)
-	if err := os.Symlink(version, tmp); err != nil { return err }
+	if err := os.Symlink(version, tmp); err != nil {
+		return err
+	}
 	current := filepath.Join(s.config.NetspocData, "current")
 	_ = os.Remove(current)
-	if err := os.Rename(tmp, current); err != nil { return err }
-	if err := s.storePublication(version, p); err != nil { return err }
+	if err := os.Rename(tmp, current); err != nil {
+		return err
+	}
+	if err := s.storePublication(version, p); err != nil {
+		return err
+	}
 	s.cache = newCache(s.config.NetspocData, 8)
 	return nil
 }
 
 func emailEntries(values []string) []map[string]string {
 	result := make([]map[string]string, 0, len(values))
-	for _, value := range values { result = append(result, map[string]string{"Email": value}) }
+	for _, value := range values {
+		result = append(result, map[string]string{"Email": value})
+	}
 	return result
 }
 
 func writeJSONFile(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil { return err }
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	return os.WriteFile(path, append(data, '\n'), 0640)
 }
 

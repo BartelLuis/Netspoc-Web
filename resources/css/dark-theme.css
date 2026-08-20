@@ -1,0 +1,535 @@
+/*
+ * Dark-mode overlay for the ExtJS application.
+ * The classic ExtJS stylesheet remains the structural base; theme.js places
+ * data-theme="dark" on the document before the application is rendered.
+ */
+
+html[data-theme="dark"] {
+    --pw-bg: #0f1724;
+    --pw-surface: #172235;
+    --pw-surface-raised: #1d2b42;
+    --pw-surface-hover: #263a56;
+    --pw-border: #3a4c68;
+    --pw-border-strong: #526986;
+    --pw-text: #e7edf6;
+    --pw-text-muted: #afbdd0;
+    --pw-accent: #72b7f2;
+    --pw-accent-strong: #2f79b8;
+    --pw-selection: #255682;
+    --pw-danger: #ff9a9a;
+    color-scheme: dark;
+    background: var(--pw-bg);
+}
+
+html[data-theme="dark"] body,
+body[data-theme="dark"],
+html[data-theme="dark"] .x-body,
+html[data-theme="dark"] .x-viewport {
+    color: var(--pw-text) !important;
+    background-color: var(--pw-bg) !important;
+}
+
+html[data-theme="dark"] #application-loading,
+html[data-theme="dark"] noscript {
+    color: var(--pw-text-muted);
+}
+
+html[data-theme="dark"] .pw-admin-frame {
+    background-color: var(--pw-bg) !important;
+}
+
+html[data-theme="dark"] ::selection {
+    color: #fff;
+    background: var(--pw-accent-strong);
+}
+
+html[data-theme="dark"] a {
+    color: var(--pw-accent);
+}
+
+html[data-theme="dark"] a:visited {
+    color: #b8a7f0;
+}
+
+/* Base surfaces and typography */
+html[data-theme="dark"] .x-component,
+html[data-theme="dark"] .x-container,
+html[data-theme="dark"] .x-panel-body,
+html[data-theme="dark"] .x-panel-body-default,
+html[data-theme="dark"] .x-window-body,
+html[data-theme="dark"] .x-window-body-default,
+html[data-theme="dark"] .x-grid-body,
+html[data-theme="dark"] .x-grid-view,
+html[data-theme="dark"] .x-tree-view,
+html[data-theme="dark"] .x-border-layout-ct {
+    color: var(--pw-text);
+}
+
+html[data-theme="dark"] .x-panel-body,
+html[data-theme="dark"] .x-panel-body-default,
+html[data-theme="dark"] .x-window-body,
+html[data-theme="dark"] .x-window-body-default,
+html[data-theme="dark"] .x-grid-body,
+html[data-theme="dark"] .x-grid-view,
+html[data-theme="dark"] .x-tree-view,
+html[data-theme="dark"] .x-border-layout-ct {
+    background-color: var(--pw-surface) !important;
+    border-color: var(--pw-border) !important;
+}
+
+html[data-theme="dark"] .x-panel-header,
+html[data-theme="dark"] .x-panel-header-default,
+html[data-theme="dark"] .x-window-header,
+html[data-theme="dark"] .x-window-header-default,
+html[data-theme="dark"] .x-grid-header-ct,
+html[data-theme="dark"] .x-grid-header-ct-default {
+    color: var(--pw-text) !important;
+    background-color: var(--pw-surface-raised) !important;
+    background-image: none !important;
+    border-color: var(--pw-border) !important;
+    box-shadow: none !important;
+}
+
+html[data-theme="dark"] .x-panel-header-text,
+html[data-theme="dark"] .x-panel-header-text-container,
+html[data-theme="dark"] .x-window-header-text,
+html[data-theme="dark"] .x-window-header-text-container {
+    color: var(--pw-text) !important;
+    text-shadow: none !important;
+}
+
+html[data-theme="dark"] .x-window-default {
+    background-color: var(--pw-surface-raised) !important;
+    border-color: var(--pw-border-strong) !important;
+    box-shadow: none !important;
+}
+
+html[data-theme="dark"] .x-window-default-tl,
+html[data-theme="dark"] .x-window-default-tc,
+html[data-theme="dark"] .x-window-default-tr,
+html[data-theme="dark"] .x-window-default-ml,
+html[data-theme="dark"] .x-window-default-mc,
+html[data-theme="dark"] .x-window-default-mr,
+html[data-theme="dark"] .x-window-default-bl,
+html[data-theme="dark"] .x-window-default-bc,
+html[data-theme="dark"] .x-window-default-br {
+    background-color: var(--pw-surface-raised) !important;
+    background-image: none !important;
+}
+
+/* Toolbars and buttons */
+html[data-theme="dark"] .x-toolbar,
+html[data-theme="dark"] .x-toolbar-default {
+    color: var(--pw-text);
+    background-color: var(--pw-surface-raised) !important;
+    background-image: none !important;
+    border-color: var(--pw-border) !important;
+}
+
+html[data-theme="dark"] .x-toolbar-text,
+html[data-theme="dark"] .x-toolbar .x-form-item-label,
+html[data-theme="dark"] .x-toolbar .x-form-cb-label {
+    color: var(--pw-text-muted) !important;
+}
+
+html[data-theme="dark"] .x-toolbar-separator {
+    border-color: var(--pw-border-strong) !important;
+}
+
+html[data-theme="dark"] .x-btn-default-small,
+html[data-theme="dark"] .x-btn-default-medium,
+html[data-theme="dark"] .x-btn-default-large,
+html[data-theme="dark"] .x-btn-default-toolbar-small,
+html[data-theme="dark"] .x-btn-default-toolbar-medium,
+html[data-theme="dark"] .x-btn-default-toolbar-large {
+    background-color: var(--pw-surface-raised) !important;
+    background-image: none !important;
+    border-color: var(--pw-border-strong) !important;
+    box-shadow: none !important;
+}
+
+html[data-theme="dark"] .x-btn-default-small-over,
+html[data-theme="dark"] .x-btn-default-medium-over,
+html[data-theme="dark"] .x-btn-default-large-over,
+html[data-theme="dark"] .x-btn-default-toolbar-small-over,
+html[data-theme="dark"] .x-btn-default-toolbar-medium-over,
+html[data-theme="dark"] .x-btn-default-toolbar-large-over,
+html[data-theme="dark"] .x-btn-over {
+    background-color: var(--pw-surface-hover) !important;
+    background-image: none !important;
+    border-color: var(--pw-accent) !important;
+}
+
+html[data-theme="dark"] .x-btn-default-small-pressed,
+html[data-theme="dark"] .x-btn-default-medium-pressed,
+html[data-theme="dark"] .x-btn-default-large-pressed,
+html[data-theme="dark"] .x-btn-default-toolbar-small-pressed,
+html[data-theme="dark"] .x-btn-default-toolbar-medium-pressed,
+html[data-theme="dark"] .x-btn-default-toolbar-large-pressed,
+html[data-theme="dark"] .x-btn-pressed {
+    background-color: var(--pw-selection) !important;
+    background-image: none !important;
+    border-color: var(--pw-accent) !important;
+}
+
+html[data-theme="dark"] .x-btn-inner,
+html[data-theme="dark"] .x-btn-default-small .x-btn-inner,
+html[data-theme="dark"] .x-btn-default-toolbar-small .x-btn-inner {
+    color: var(--pw-text) !important;
+    text-shadow: none !important;
+}
+
+html[data-theme="dark"] .x-btn-disabled .x-btn-inner,
+html[data-theme="dark"] .x-item-disabled .x-btn-inner {
+    color: #78869a !important;
+}
+
+html[data-theme="dark"] .x-btn-focus,
+html[data-theme="dark"] .x-form-focus {
+    outline-color: var(--pw-accent) !important;
+}
+
+/* Forms */
+html[data-theme="dark"] .x-form-item-label,
+html[data-theme="dark"] .x-form-cb-label,
+html[data-theme="dark"] .x-form-display-field,
+html[data-theme="dark"] .x-fieldset-header-text {
+    color: var(--pw-text) !important;
+}
+
+html[data-theme="dark"] .x-fieldset {
+    border-color: var(--pw-border) !important;
+}
+
+html[data-theme="dark"] .x-form-field,
+html[data-theme="dark"] .x-form-text,
+html[data-theme="dark"] textarea.x-form-field {
+    color: var(--pw-text) !important;
+    background-color: #101a2a !important;
+    background-image: none !important;
+    border-color: var(--pw-border-strong) !important;
+}
+
+html[data-theme="dark"] .x-form-empty-field {
+    color: #8998ac !important;
+}
+
+html[data-theme="dark"] .x-form-trigger-wrap,
+html[data-theme="dark"] .x-form-trigger {
+    color: var(--pw-text);
+    background-color: var(--pw-surface-raised) !important;
+    border-color: var(--pw-border-strong) !important;
+}
+
+html[data-theme="dark"] .x-form-arrow-trigger {
+    background-image: none !important;
+    position: relative;
+}
+
+html[data-theme="dark"] .x-form-arrow-trigger::after {
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid var(--pw-text-muted);
+    content: "";
+    left: 4px;
+    margin-top: -2px;
+    position: absolute;
+    top: 50%;
+}
+
+html[data-theme="dark"] .x-form-trigger-wrap-focus .x-form-trigger-wrap,
+html[data-theme="dark"] .x-form-trigger-wrap-focus {
+    border-color: var(--pw-accent) !important;
+}
+
+html[data-theme="dark"] .x-form-invalid-field,
+html[data-theme="dark"] .x-form-invalid-under {
+    color: var(--pw-danger) !important;
+}
+
+/* ExtJS Classic uses light checkbox/radio sprites. Rebuild the controls with
+ * theme colors so checked, focus and disabled states remain distinguishable. */
+html[data-theme="dark"] .x-form-checkbox,
+html[data-theme="dark"] .x-form-radio,
+html[data-theme="dark"] .x-grid-row-checker,
+html[data-theme="dark"] .x-column-header-checkbox .x-column-header-text {
+    background-color: #101a2a !important;
+    background-image: none !important;
+    border: 1px solid var(--pw-border-strong) !important;
+    box-sizing: border-box;
+    height: 13px !important;
+    width: 13px !important;
+}
+
+html[data-theme="dark"] .x-form-checkbox,
+html[data-theme="dark"] .x-grid-row-checker,
+html[data-theme="dark"] .x-column-header-checkbox .x-column-header-text {
+    border-radius: 2px;
+}
+
+html[data-theme="dark"] .x-form-radio {
+    border-radius: 50%;
+}
+
+html[data-theme="dark"] .x-form-cb-checked .x-form-checkbox,
+html[data-theme="dark"] .x-grid-hd-checker-on .x-column-header-text,
+html[data-theme="dark"] .x-grid-row-selected .x-grid-row-checker,
+html[data-theme="dark"] .x-grid-row-checked .x-grid-row-checker {
+    background-color: var(--pw-accent-strong) !important;
+    background-image: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2013%2013%22%3E%3Cpath%20d=%22M2.2%206.7L5.1%209.5L10.8%203.1%22%20fill=%22none%22%20stroke=%22%23fff%22%20stroke-width=%222%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22/%3E%3C/svg%3E") !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+    background-size: 11px 11px !important;
+    border-color: var(--pw-accent) !important;
+}
+
+html[data-theme="dark"] .x-form-cb-checked .x-form-radio {
+    background-color: var(--pw-accent-strong) !important;
+    background-image: radial-gradient(circle, #fff 0, #fff 3px, transparent 3.5px) !important;
+    background-position: center !important;
+    border-color: var(--pw-accent) !important;
+}
+
+html[data-theme="dark"] .x-form-checkbox:hover,
+html[data-theme="dark"] .x-form-radio:hover {
+    border-color: var(--pw-accent) !important;
+}
+
+html[data-theme="dark"] .x-form-checkbox-focus,
+html[data-theme="dark"] .x-form-radio-focus {
+    border-color: var(--pw-accent) !important;
+    outline: 2px solid var(--pw-accent) !important;
+    outline-offset: 2px;
+}
+
+html[data-theme="dark"] .x-grid-row-focused .x-grid-row-checker {
+    border-color: var(--pw-accent) !important;
+}
+
+html[data-theme="dark"] .x-item-disabled .x-form-checkbox,
+html[data-theme="dark"] .x-item-disabled .x-form-radio {
+    cursor: not-allowed;
+    opacity: .55;
+}
+
+/* Grids and trees */
+html[data-theme="dark"] .x-column-header,
+html[data-theme="dark"] .x-column-header-inner {
+    color: var(--pw-text) !important;
+    background-color: var(--pw-surface-raised) !important;
+    background-image: none !important;
+    border-color: var(--pw-border) !important;
+}
+
+html[data-theme="dark"] .x-column-header-over,
+html[data-theme="dark"] .x-column-header-open {
+    background-color: var(--pw-surface-hover) !important;
+    background-image: none !important;
+}
+
+html[data-theme="dark"] .x-column-header-text {
+    color: var(--pw-text) !important;
+    text-shadow: none !important;
+}
+
+html[data-theme="dark"] .x-column-header-trigger {
+    background-color: var(--pw-surface-hover) !important;
+    background-image: none !important;
+    border-color: var(--pw-border) !important;
+}
+
+html[data-theme="dark"] .x-column-header-trigger::after {
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid var(--pw-text-muted);
+    content: "";
+    left: 3px;
+    margin-top: -2px;
+    position: absolute;
+    top: 50%;
+}
+
+html[data-theme="dark"] .x-grid-row .x-grid-cell,
+html[data-theme="dark"] .x-grid-row-summary .x-grid-cell,
+html[data-theme="dark"] .x-grid-rowbody {
+    color: var(--pw-text) !important;
+    background-color: var(--pw-surface) !important;
+    border-color: var(--pw-border) !important;
+}
+
+html[data-theme="dark"] .x-grid-row-alt .x-grid-cell {
+    background-color: #142035 !important;
+}
+
+html[data-theme="dark"] .x-grid-row-over .x-grid-cell,
+html[data-theme="dark"] .x-grid-row-focused .x-grid-cell {
+    background-color: var(--pw-surface-hover) !important;
+}
+
+html[data-theme="dark"] .x-grid-row-selected .x-grid-cell {
+    color: #fff !important;
+    background-color: var(--pw-selection) !important;
+    border-color: #3e78a7 !important;
+}
+
+html[data-theme="dark"] .x-grid-cell-inner,
+html[data-theme="dark"] .x-tree-node-text,
+html[data-theme="dark"] .x-grid-group-title,
+html[data-theme="dark"] .x-grid-empty {
+    color: inherit !important;
+}
+
+html[data-theme="dark"] .x-grid-group-hd {
+    color: var(--pw-accent) !important;
+    background-color: var(--pw-bg) !important;
+    border-color: var(--pw-border-strong) !important;
+}
+
+html[data-theme="dark"] .x-grid-row-editor,
+html[data-theme="dark"] .x-grid-row-editor-body {
+    color: var(--pw-text) !important;
+    background-color: var(--pw-surface-raised) !important;
+    border-color: var(--pw-accent-strong) !important;
+}
+
+/* Drop-down lists and menus are floating elements below body. */
+html[data-theme="dark"] .x-boundlist,
+html[data-theme="dark"] .x-boundlist-list-ct,
+html[data-theme="dark"] .x-menu,
+html[data-theme="dark"] .x-menu-body {
+    color: var(--pw-text) !important;
+    background-color: var(--pw-surface-raised) !important;
+    background-image: none !important;
+    border-color: var(--pw-border-strong) !important;
+}
+
+html[data-theme="dark"] .x-boundlist-item,
+html[data-theme="dark"] .x-menu-item-link,
+html[data-theme="dark"] .x-menu-item-text {
+    color: var(--pw-text) !important;
+}
+
+html[data-theme="dark"] .x-boundlist-item-over,
+html[data-theme="dark"] .x-boundlist-selected,
+html[data-theme="dark"] .x-menu-item-active .x-menu-item-link {
+    color: #fff !important;
+    background-color: var(--pw-selection) !important;
+    background-image: none !important;
+    border-color: var(--pw-accent-strong) !important;
+}
+
+html[data-theme="dark"] .x-menu-icon-separator,
+html[data-theme="dark"] .x-menu-separator {
+    border-color: var(--pw-border) !important;
+    background-color: var(--pw-border) !important;
+}
+
+/* Tabs */
+html[data-theme="dark"] .x-tab-bar,
+html[data-theme="dark"] .x-tab-bar-default,
+html[data-theme="dark"] .x-tab-bar-body,
+html[data-theme="dark"] .x-tab-bar-body-default {
+    background-color: var(--pw-bg) !important;
+    background-image: none !important;
+    border-color: var(--pw-border) !important;
+}
+
+html[data-theme="dark"] .x-tab-default-top,
+html[data-theme="dark"] .x-tab-default-bottom,
+html[data-theme="dark"] .x-tab-default-left,
+html[data-theme="dark"] .x-tab-default-right {
+    background-color: var(--pw-surface-raised) !important;
+    background-image: none !important;
+    border-color: var(--pw-border) !important;
+}
+
+html[data-theme="dark"] .x-tab-default-over {
+    background-color: var(--pw-surface-hover) !important;
+}
+
+html[data-theme="dark"] .x-tab-default-active {
+    background-color: var(--pw-selection) !important;
+    border-color: var(--pw-accent) !important;
+}
+
+html[data-theme="dark"] .x-tab-inner,
+html[data-theme="dark"] .x-tab-default .x-tab-inner {
+    color: var(--pw-text) !important;
+    text-shadow: none !important;
+}
+
+html[data-theme="dark"] .x-tab-bar-strip,
+html[data-theme="dark"] .x-tab-bar-strip-default {
+    background-color: var(--pw-accent-strong) !important;
+    border-color: var(--pw-accent-strong) !important;
+}
+
+/* Dialogs, masks and tooltips */
+html[data-theme="dark"] .x-css-shadow {
+    box-shadow: 0 12px 36px rgba(0, 0, 0, .55) !important;
+}
+
+html[data-theme="dark"] .x-mask {
+    background-color: #02060d !important;
+    opacity: .68;
+}
+
+html[data-theme="dark"] .x-mask-msg,
+html[data-theme="dark"] .x-mask-msg-inner {
+    color: var(--pw-text) !important;
+    background-color: var(--pw-surface-raised) !important;
+    background-image: none !important;
+    border-color: var(--pw-border-strong) !important;
+}
+
+html[data-theme="dark"] .x-tip,
+html[data-theme="dark"] .x-tip-default,
+html[data-theme="dark"] .x-tip-body,
+html[data-theme="dark"] .x-tip-body-default {
+    color: var(--pw-text) !important;
+    background-color: #243550 !important;
+    background-image: none !important;
+    border-color: var(--pw-border-strong) !important;
+}
+
+html[data-theme="dark"] .x-tip-body,
+html[data-theme="dark"] .x-tip-header-text-container {
+    color: var(--pw-text) !important;
+}
+
+/* Keep the server-rendered about fragment aligned with its ExtJS window. */
+html[data-theme="dark"] .pw-about-window-body,
+html[data-theme="dark"] .pw-about-window-body > div,
+html[data-theme="dark"] .pw-about-window-body td,
+html[data-theme="dark"] .pw-about-window-body p {
+    color: var(--pw-text) !important;
+    background-color: var(--pw-surface) !important;
+}
+
+html[data-theme="dark"] .pw-about-window-body a {
+    color: var(--pw-accent) !important;
+}
+
+/* Native scrollbars in modern browsers. */
+html[data-theme="dark"] * {
+    scrollbar-color: var(--pw-border-strong) var(--pw-bg);
+}
+
+html[data-theme="dark"] *::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+}
+
+html[data-theme="dark"] *::-webkit-scrollbar-track {
+    background: var(--pw-bg);
+}
+
+html[data-theme="dark"] *::-webkit-scrollbar-thumb {
+    background: var(--pw-border-strong);
+    border: 3px solid var(--pw-bg);
+    border-radius: 8px;
+}
+
+html[data-theme="dark"] *::-webkit-scrollbar-thumb:hover {
+    background: #6984a6;
+}

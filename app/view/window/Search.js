@@ -28,7 +28,7 @@ Ext.define(
             Ext.apply(
                 this,
                 {
-                    title       : 'IP-Adresse oder Zeichenkette suchen',
+                    title       : 'Dienste, IP-Adressen, FQDNs oder Netzobjekte suchen',
                     width       : 350, 
                     height      : 475,
                     resizable   : false,
@@ -74,7 +74,7 @@ Ext.define(
             var tab_panel = {
                 xtype     : 'tabpanel',
                 plain     : true,
-                activeTab : 0,
+                activeTab : 1,
                 height    : 220,
                 defaults  : {
                     bodyPadding : 10
@@ -93,7 +93,7 @@ Ext.define(
                 xtype     : 'textfield',
                 name      : 'search_string',
                 blankText : 'Eine Suche ohne Suchbegriff macht keinen Sinn',
-                emptyText : 'Suchbegriff eingeben'
+                emptyText : 'Dienstname oder Beschreibung'
             };
 
             var fieldset = {
@@ -105,7 +105,7 @@ Ext.define(
                 ]
             };
             return {
-                title    : 'Allgemeine Suche',
+                title    : 'Dienstsuche',
                 layout   : 'anchor',
                 items : [
                     fieldset,
@@ -235,7 +235,7 @@ Ext.define(
 
         buildIPSearchTab : function() {
             return {
-                title : 'Ende-zu-Ende-Suche',
+                title : 'Netz-/IP-Suche',
                 items : [
                     this.buildIPSearchPanel()
                 ]
@@ -252,7 +252,8 @@ Ext.define(
                     {   
                         id         : 'cb_search_supernet',
                         boxLabel   : 'Übergeordnete Netze einbeziehen',
-                        name       : 'search_supernet'
+                        name       : 'search_supernet',
+                        checked    : true
                     },
                     {   
                         id         : 'cb_search_subnet',
@@ -279,7 +280,7 @@ Ext.define(
                         labelWidth     : 60,
                         margin         : '0 10 0 0', // top,r,b,l
                         padding        : '4 0 0 0',  // top,r,b,l
-                        emptyText      : 'IP oder Zeichenkette',
+                        emptyText      : 'IP-Adresse, FQDN oder Netzobjekt',
                         loader         : {
                             url : 'html/ip_search_tooltip'
                         },
@@ -292,7 +293,7 @@ Ext.define(
                         labelWidth     : 60,
                         margin         : '0 10 0 0', // top,r,b,l
                         padding        : '4 0 0 0',  // top,r,b,l
-                        emptyText      : 'IP oder Zeichenkette',
+                        emptyText      : 'IP-Adresse, FQDN oder Netzobjekt',
                         loader         : {
                             url : 'html/ip_search_tooltip'
                         },

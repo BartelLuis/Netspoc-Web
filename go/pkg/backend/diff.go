@@ -10,10 +10,14 @@ import (
 
 func (s *state) getDiff(w http.ResponseWriter, r *http.Request) {
 	owner := r.FormValue("active_owner")
+	if !s.requireOwnerAccess(w, r, owner) {
+		return
+	}
 	version := r.FormValue("version")
 	selectedHistory := s.getHistoryParamOrCurrentPolicy(r)
 	if version == "" {
 		writeError(w, "version parameter is required", http.StatusBadRequest)
+		return
 	}
 	c := s.cache
 	changed, err := c.compare(version, selectedHistory, owner)
@@ -144,6 +148,9 @@ func sortedKeys(m any) []string {
 
 func (s *state) getDiffMail(w http.ResponseWriter, r *http.Request) {
 	owner := r.FormValue("active_owner")
+	if !s.requireOwnerAccess(w, r, owner) {
+		return
+	}
 	store, err := GetUserStore(s.getUserFile(r))
 	if err != nil {
 		writeError(w, "Failed to get user store: "+err.Error(), http.StatusInternalServerError)
@@ -163,12 +170,10 @@ func (s *state) setDiffMail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "Can't send diff for user 'guest'", http.StatusBadRequest)
 		return
 	}
-	err := s.validateOwner(r, true)
-	if err != nil {
-		writeError(w, err.Error(), http.StatusBadRequest)
+	owner := r.FormValue("active_owner")
+	if !s.requireOwnerAccess(w, r, owner) {
 		return
 	}
-	owner := r.FormValue("active_owner")
 	userFile := s.getUserFile(r)
 	store, err := GetUserStore(userFile)
 	if err != nil {

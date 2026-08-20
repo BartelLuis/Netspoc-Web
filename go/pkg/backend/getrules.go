@@ -8,6 +8,9 @@ import (
 func (s *state) getRules(w http.ResponseWriter, r *http.Request) {
 	history := s.getHistoryParamOrCurrentPolicy(r)
 	owner := r.FormValue("active_owner")
+	if !s.requireOwnerAccess(w, r, owner) {
+		return
+	}
 	service := r.FormValue("service")
 	serviceLists := s.loadServiceLists(history, owner)
 	if !serviceLists.accessible[service] {
@@ -240,6 +243,9 @@ func (s *state) name2IP(version string, objName string, natSet map[string]bool) 
 			obj.IP = objNat[tag]
 			return obj.IP
 		}
+	}
+	if obj.IP == "" {
+		return obj.FQDN
 	}
 	return obj.IP
 }

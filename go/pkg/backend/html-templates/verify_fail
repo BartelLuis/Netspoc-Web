@@ -1,18 +1,21 @@
+<!doctype html>
+<html lang="de">
 <head>
-<title>Verifikation</title>
-<style type="text/css">
- body {font-family:sans-serif;} 
-</style>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Verifikation</title>
+	<script src="/resources/js/theme.js"></script>
+	<style>body { font-family: sans-serif; }</style>
+	<link rel="stylesheet" href="/resources/css/theme-static.css">
 </head>
-
 <body>
-<h2>Fehler</h2>
-Ein Fehler ist aufgetreten.<br>
-Ihr Kennwort wurde nicht geändert.
-<p>
-Hinweis:<br>
-Die Anforderung und die Best&auml;tigung des Kennworts m&uuml;ssen den
-gleichen Cookie verwenden. Beide Aufrufe m&uuml;ssen daher von dem gleichen
-Rechner und mit dem gleichen Browser erfolgen.
+	<main class="pw-standalone">
+		<div class="pw-page-heading">
+			<h2>Fehler</h2>
+			<button class="pw-theme-toggle" data-policyweb-theme-toggle type="button">Dark Mode</button>
+		</div>
+		<p>Ein Fehler ist aufgetreten. Ihr Kennwort wurde nicht geändert.</p>
+		<p>Hinweis: Die Anforderung und die Bestätigung des Kennworts müssen denselben Cookie verwenden. Beide Aufrufe müssen daher vom gleichen Rechner und mit dem gleichen Browser erfolgen.</p>
+	</main>
 </body>
-
+</html>

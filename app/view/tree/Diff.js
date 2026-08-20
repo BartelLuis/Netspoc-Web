@@ -33,7 +33,10 @@ Ext.define(
 
         initComponent : function() {
             var checkbox = Ext.create(
-                'Ext.form.field.Checkbox'
+                'Ext.form.field.Checkbox',
+                {
+                    inputAttrTpl: 'aria-label="Diff per Mail senden"'
+                }
             );
             var combo = Ext.create(
                 'PolicyWeb.view.combo.HistoryCombo'

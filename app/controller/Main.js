@@ -16,7 +16,6 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-var global_theme_name = 'neptune';
 var about_window;
 
 Ext.define(
@@ -54,6 +53,9 @@ Ext.define(
                 },
                 'mainview panel button[iconCls="icon-info"]': {
                     click: this.onMainInfoButtonClick
+                },
+                'mainview panel button#btn_theme': {
+                    click: this.onThemeButtonClick
                 },
                 'messagebox[title="Sitzung abgelaufen"] button': {
                     click: this.onSessionTimeout
@@ -99,6 +101,14 @@ Ext.define(
 
     onLaunch: function () {
         appstate.setInitPhase(true);
+
+        if (window.PolicyWebTheme) {
+            var controller = this;
+            window.PolicyWebTheme.onChange(function (theme) {
+                controller.updateThemeButton(theme);
+            });
+            this.updateThemeButton(window.PolicyWebTheme.get());
+        }
 
 		// Administration is hidden by default and only exposed after the
 		// backend confirms an editor or administrator role.
@@ -214,13 +224,6 @@ Ext.define(
     },
 
     setOwnerState: function (owner_obj) {
-        /*
-                    global_theme_name = 'gray';
-                    var theme = '/extjs4/resources/ext-theme-' + global_theme_name + '/ext-theme-' +
-                        global_theme_name + '-all.css';
-                    console.log(theme);
-                    Ext.util.CSS.swapStyleSheet("theme", theme);
-        */
         var store = this.getCurrentPolicyStore();
         store.load(
             {
@@ -305,6 +308,31 @@ Ext.define(
         }
         else {
             about_window.hide();
+        }
+    },
+
+    onThemeButtonClick: function () {
+        if (window.PolicyWebTheme) {
+            window.PolicyWebTheme.toggle();
+        }
+    },
+
+    updateThemeButton: function (theme) {
+        var button = Ext.getCmp('btn_theme');
+        var darkMode = theme === 'dark';
+        var actionLabel = darkMode ?
+            'Light Mode aktivieren' : 'Dark Mode aktivieren';
+
+        if (!button) {
+            return;
+        }
+
+        button.setIconCls(darkMode ? 'icon-theme-light' : 'icon-theme-dark');
+        button.setTooltip(actionLabel);
+
+        if (button.rendered && button.el) {
+            button.el.dom.setAttribute('aria-label', actionLabel);
+            button.el.dom.setAttribute('data-theme-current', theme);
         }
     },
 

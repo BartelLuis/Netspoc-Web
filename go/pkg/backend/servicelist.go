@@ -84,6 +84,9 @@ func (s *state) generateServiceList(r *http.Request) []jsonMap {
 }
 
 func (s *state) serviceList(w http.ResponseWriter, r *http.Request) {
+	if !s.requireOwnerAccess(w, r, r.FormValue("active_owner")) {
+		return
+	}
 	records := s.generateServiceList(r)
 	writeRecords(w, records)
 }
@@ -122,6 +125,39 @@ SERVICE:
 		matchProto := func(prtList []string) bool {
 			return slices.ContainsFunc(prtList, protoMatcher)
 		}
+		// Policies created in the administration UI contain explicit source and
+		// destination objects instead of a separate service-user placeholder.
+		// Match those rules directly. The legacy search below still handles rules
+		// whose has_user value is src, dst or both.
+		matchExplicitRules := func() bool {
+			for _, rule := range rules {
+				if rule.HasUser != "" {
+					continue
+				}
+				if protoMatcher != nil && !matchProto(rule.Prt) {
+					continue
+				}
+
+				switch {
+				case m1 == nil && m2 == nil:
+					return true
+				case m1 == nil:
+					if match(m2, rule.Src) || match(m2, rule.Dst) {
+						return true
+					}
+				case m2 == nil:
+					if match(m1, rule.Src) || match(m1, rule.Dst) {
+						return true
+					}
+				default:
+					if match(m1, rule.Src) && match(m2, rule.Dst) ||
+						match(m2, rule.Src) && match(m1, rule.Dst) {
+						return true
+					}
+				}
+			}
+			return false
+		}
 		matchRules := func(m map[string]bool) bool {
 			if m == nil && protoMatcher == nil {
 				return true
@@ -151,6 +187,10 @@ SERVICE:
 			return false
 		}
 
+		if matchExplicitRules() {
+			result = append(result, name)
+			continue SERVICE
+		}
 		if matchUsers(m1) {
 			if matchRules(m2) {
 				result = append(result, name)
@@ -244,8 +284,8 @@ func (s *state) buildTextSearchMap(r *http.Request, search string,
 
 	// Collect names of matching objects.
 	result := make(map[string]bool)
-	for name := range objects {
-		if matcher(name) {
+	for name, obj := range objects {
+		if matcher(name) || obj.FQDN != "" && matcher(obj.FQDN) {
 			result[name] = true
 		}
 	}
@@ -270,6 +310,9 @@ func (s *state) buildTextSearchMap(r *http.Request, search string,
 	zone2ips := make(map[string][]any)
 	for name := range result {
 		obj := objects[name]
+		if obj.IP == "" {
+			continue
+		}
 		zone2ips[obj.Zone] = append(zone2ips[obj.Zone], getIP(obj.IP))
 	}
 
@@ -293,6 +336,9 @@ func (s *state) buildTextSearchMap(r *http.Request, search string,
 			continue
 		}
 		obj := objects[name]
+		if obj.IP == "" {
+			continue
+		}
 		ips := zone2ips[obj.Zone]
 		if ips == nil {
 			continue
@@ -464,7 +510,10 @@ var portRE = regexp.MustCompile(`^((?:tcp|udp) )?(\d+)$`)
 //   - tcp|udp
 //   - some other string: search in protocol name and modifier
 func getProtoMatcher(r *http.Request) func(string) bool {
-	search := strings.ToLower(r.FormValue("search_proto"))
+	search := strings.ToLower(strings.TrimSpace(r.FormValue("search_proto")))
+	if search == "" {
+		return nil
+	}
 	if m := portRE.FindStringSubmatch(search); m != nil {
 		tcpudp, port := m[1], m[2]
 		if r.FormValue("search_range") != "" {

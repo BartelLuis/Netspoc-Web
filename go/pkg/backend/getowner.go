@@ -3,6 +3,8 @@ package backend
 import (
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -29,41 +31,27 @@ func (s *state) getOwner(w http.ResponseWriter, r *http.Request) {
 	ow := getOwnerFromSession(r)
 	email := getEmailFromSession(r)
 	authorizedOwners := s.findAuthorizedOwners(email)
+	if len(authorizedOwners) == 0 {
+		writeRecords(w, []jsonMap{})
+		return
+	}
 	// Selected owner was stored before.
 	if ow != "" && slices.Contains(authorizedOwners, ow) {
 		writeRecords(w, []jsonMap{{"name": ow}})
 		return
 	}
-	/* Automatically select owner with most number of own services.
-	   1. Bestimme die Liste der Owner, die der aktuelle Benutzer
-	      sehen darf, mittels findAuthorizedOwners.
-	   2. Bestimme aus allen Services eine Map,
-	      die angibt, wie viele Services einem Owner gehören.
-	      Hierbei werden Multi-Owner-Dienste mehrfach gezählt.
-	   3. Bestimme aus 1 und 2 den Owner, dem die meisten Services gehören.
-	   4. Schaue für diesen Owner x in owner/x/extended_by
-	      und prüfe, ob einer dieser übergeordneten Owner
-	      in der Liste von Schritt 2 enthalten ist.
-	      Dann nimm diesen, sonst den Owner aus Schritt 3.
-	   5. Falls mehrere Owner bei 4. eingetragen sind,
-	      bestimme den besten Owner aus der Anzahl
-	      der Services in ower/x/service_list.
-	*/
+	/* Automatically select the authorized owner with the largest effective
+	service list. The list already contains hierarchy descendants and explicit
+	read grants. If an authorized parent has an even larger effective list,
+	extended_by may still promote that parent. */
 
-	// Create a map of owner to number of services first.
+	// Compare effective service lists, not only direct service ownership. This
+	// makes an authorized read_all/read_owners collector the natural default.
 	histPar := s.getHistoryParamOrCurrentPolicy(r)
-	services := s.loadServices(histPar)
-	ownerToServiceCount := make(map[string]int)
-	for _, service := range services {
-		for _, owner := range service.Details.Owner {
-			ownerToServiceCount[owner]++
-		}
-	}
-	// Find owner with most services.
-	bestOwner := ""
-	maxServices := 0
-	for _, ow := range authorizedOwners {
-		count := ownerToServiceCount[ow]
+	bestOwner := authorizedOwners[0]
+	maxServices := len(s.loadServiceLists(histPar, bestOwner).Owner)
+	for _, ow := range authorizedOwners[1:] {
+		count := len(s.loadServiceLists(histPar, ow).Owner)
 		if count > maxServices {
 			maxServices = count
 			bestOwner = ow
@@ -71,7 +59,7 @@ func (s *state) getOwner(w http.ResponseWriter, r *http.Request) {
 	}
 	if bestOwner != "" {
 		extBy := s.loadExtendedBy(histPar, bestOwner)
-		maxSize := 0
+		maxSize := maxServices
 		for _, entry := range extBy {
 			ow := entry.Name
 			sl := s.loadServiceLists(histPar, ow)
@@ -130,4 +118,50 @@ func (s *state) canAccessOwner(r *http.Request, owner string) bool {
 		}
 	}
 	return false
+}
+
+// requestedActiveOwner returns the explicit request parameter, or the owner
+// stored in the session for endpoints which historically allowed that fallback.
+func requestedActiveOwner(r *http.Request) string {
+	owner := r.FormValue("active_owner")
+	if owner == "" {
+		owner = getOwnerFromSession(r)
+	}
+	return owner
+}
+
+// requireOwnerAccess is the common authorization gate for every endpoint that
+// reads owner-scoped policy data. The current policy controls authorization,
+// including when an older policy revision is being displayed.
+func (s *state) requireOwnerAccess(w http.ResponseWriter, r *http.Request, owner string) bool {
+	if owner == "" {
+		writeError(w, "missing parameter 'active_owner'", http.StatusBadRequest)
+		return false
+	}
+	if !s.canAccessOwner(r, owner) {
+		writeError(w, "Not authorized to access owner '"+owner+"'", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// ownerTargetExists validates secondary owner parameters used to load contact
+// information. Such a target may differ from active_owner for multi-owner
+// services. Strict name validation also prevents directory traversal.
+func (s *state) ownerTargetExists(owner string) bool {
+	if !policyNameRE.MatchString(owner) {
+		return false
+	}
+	if info, err := os.Stat(filepath.Join(s.config.NetspocData, "current", "owner", owner)); err != nil || !info.IsDir() {
+		return false
+	}
+	return true
+}
+
+func (s *state) requireOwnerTarget(w http.ResponseWriter, owner string) bool {
+	if !s.ownerTargetExists(owner) {
+		writeError(w, "Owner is unavailable", http.StatusForbidden)
+		return false
+	}
+	return true
 }

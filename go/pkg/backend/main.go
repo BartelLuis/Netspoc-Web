@@ -58,6 +58,7 @@ func getMux() (*http.ServeMux, *state) {
 	needsLoginMux.HandleFunc("/get_users", s.getUsers)
 	needsLoginMux.HandleFunc("/get_services_and_rules", s.getServicesAndRules)
 	needsLoginMux.HandleFunc("/get_networks", s.getNetworks)
+	needsLoginMux.HandleFunc("/get_fqdns", s.getFQDNs)
 	needsLoginMux.HandleFunc("/get_network_resources", s.getNetworkResources)
 	needsLoginMux.HandleFunc("/get_networks_and_resources", s.getNetworksAndResources)
 	needsLoginMux.HandleFunc("/get_history", s.getHistory)

@@ -24,10 +24,19 @@ Ext.define(
             { name     : 'name'  , 
               header   : 'Name'
             },
+            { name     : 'fqdn'
+            },
             { name     : 'ip',
-              header   : 'IP-Adressen',
+              header   : 'IP-Adresse / FQDN',
               width    : 0.25,
-              sortType : 'asIP'
+              sortType : 'asUCText',
+              convert  : function(value, record) {
+                  if (value) {
+                      return value;
+                  }
+                  return record.raw && record.raw.fqdn ?
+                      record.raw.fqdn : '';
+              }
             },
             // Not shown, but needed to select the corresponding
             // email addresses.

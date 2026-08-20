@@ -8,7 +8,14 @@ import (
 func (s *state) getUsers(w http.ResponseWriter, r *http.Request) {
 	history := s.getHistoryParamOrCurrentPolicy(r)
 	owner := r.FormValue("active_owner")
+	if !s.requireOwnerAccess(w, r, owner) {
+		return
+	}
 	service := r.FormValue("service")
+	if !s.loadServiceLists(history, owner).accessible[service] {
+		writeError(w, "Service is unavailable", http.StatusForbidden)
+		return
+	}
 	_, users := s.getMatchingRulesAndUsers(r, service)
 	writeRecords(w, s.getCombinedObjList(users, owner, history))
 }

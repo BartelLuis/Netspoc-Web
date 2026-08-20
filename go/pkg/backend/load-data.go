@@ -50,6 +50,7 @@ type object struct {
 	Name  string            `json:"name"`
 	IP    string            `json:"ip"`
 	IP6   string            `json:"ip6,omitempty"`
+	FQDN  string            `json:"fqdn,omitempty"`
 	NAT   map[string]string `json:"nat,omitempty"`
 	Zone  string            `json:"zone"`
 	Owner string            `json:"owner"`
@@ -92,6 +93,7 @@ type ownerData struct {
 type assets struct {
 	networkList []string
 	net2childs  map[string][]string
+	fqdnList    []string
 }
 type serviceLists struct {
 	Owner      []string
@@ -223,22 +225,27 @@ func (c *cache) loadAssets(version, owner string) *assets {
 		result := &assets{net2childs: make(map[string][]string)}
 		var grouped map[string]struct {
 			Networks map[string][]string `json:"networks"`
+			FQDNs    []string            `json:"fqdns"`
 		}
 		if err := json.Unmarshal(origAssets.Anys, &grouped); err == nil {
-			for _, n2c := range grouped {
-				maps.Copy(result.net2childs, n2c.Networks)
+			for _, group := range grouped {
+				maps.Copy(result.net2childs, group.Networks)
+				result.fqdnList = append(result.fqdnList, group.FQDNs...)
 			}
 		}
 		// Accept the flat shape emitted by earlier Policy-Web GUI versions so
 		// existing published policies immediately regain their contained IPs.
 		var flat struct {
 			Networks map[string][]string `json:"networks"`
+			FQDNs    []string            `json:"fqdns"`
 		}
 		if err := json.Unmarshal(origAssets.Anys, &flat); err == nil {
-			n2c := flat
-			maps.Copy(result.net2childs, n2c.Networks)
+			maps.Copy(result.net2childs, flat.Networks)
+			result.fqdnList = append(result.fqdnList, flat.FQDNs...)
 		}
 		result.networkList = slices.Collect(maps.Keys(result.net2childs))
+		slices.Sort(result.fqdnList)
+		result.fqdnList = slices.Compact(result.fqdnList)
 		entry.assets = result
 	}
 	return entry.assets

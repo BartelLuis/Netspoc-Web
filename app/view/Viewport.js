@@ -30,6 +30,9 @@ Ext.define(
 
         buildViewport : function () {
 
+            var darkMode = window.PolicyWebTheme &&
+                window.PolicyWebTheme.isDark();
+
             var cardPanel = {
                 xtype          : 'panel',
                 layout         : 'card',
@@ -94,6 +97,13 @@ Ext.define(
                     { 
                         id    : 'list_owner',
                         xtype : 'ownercombo' 
+                    },
+                    ' ',
+                    {
+                        id           : 'btn_theme',
+                        iconCls      : darkMode ? 'icon-theme-light' : 'icon-theme-dark',
+                        tooltip      : darkMode ?
+                            'Light Mode aktivieren' : 'Dark Mode aktivieren'
                     },
                     ' ',
                     'Abmelden',

@@ -3,7 +3,9 @@
 
 <head>
 	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
 	<title>Policy-Web</title>
+	<script src="resources/js/theme.js"></script>
 	<style type="text/css">
 		body,
 		html {
@@ -47,12 +49,16 @@
 			clear: both
 		}
 	</style>
+	<link rel="stylesheet" href="resources/css/theme-static.css">
 	<link rel="icon" type="image/vnd.microsoft.icon" href="resources/images/policyweb.ico">
 </head>
 
 <body onload="document.getElementsByName('email')[0].focus();">
 	<div id="links">
-		<h1>Policy-Web</h1>
+		<div class="pw-page-heading">
+			<h1>Policy-Web</h1>
+			<button class="pw-theme-toggle" data-policyweb-theme-toggle type="button">Dark Mode</button>
+		</div>
 	</div>
 
 	<form action="backend6/login" method="post" id="login-form">

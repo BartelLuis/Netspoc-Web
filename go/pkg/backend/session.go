@@ -40,6 +40,9 @@ func (s *state) setSessionData(w http.ResponseWriter, r *http.Request) {
 			writeError(w, fmt.Sprintf("Invalid param '%s'", key), http.StatusBadRequest)
 			return
 		}
+		if key == "owner" && !s.requireOwnerAccess(w, r, value[0]) {
+			return
+		}
 		session.Put(key, value[0]) // Store the first value for the key.
 	}
 	writeRecords(w, []jsonMap{})

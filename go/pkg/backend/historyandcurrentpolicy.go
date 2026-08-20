@@ -77,6 +77,9 @@ func getPolicyFromFile(policyPath string) (map[string]string, error) {
 }
 
 func (s *state) getHistory(w http.ResponseWriter, r *http.Request) {
+	if !s.requireOwnerAccess(w, r, r.FormValue("active_owner")) {
+		return
+	}
 	histDirs, err := s.generateHistory(r)
 	if err != nil {
 		writeError(w, "Failed to get history: "+err.Error(), http.StatusInternalServerError)

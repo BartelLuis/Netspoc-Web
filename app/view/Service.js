@@ -70,16 +70,20 @@ Ext.define(
                                 {
                                     id: 'btn_service_details',
                                     text: 'Details zum Dienst',
+                                    serviceCardItemId: 'service-details-card',
                                     toggleGroup: 'polDVGrp',
                                     enableToggle: true,
+                                    allowDepress: false,
                                     pressed: true
                                 },
                                 '-',
                                 {
                                     id: 'btn_service_user',
                                     text: 'Benutzer (User) des Dienstes',
+                                    serviceCardItemId: 'service-users-card',
                                     toggleGroup: 'polDVGrp',
-                                    enableToggle: true
+                                    enableToggle: true,
+                                    allowDepress: false
                                 },
                                 '->',
                                 {
@@ -137,6 +141,7 @@ Ext.define(
 
         buildServiceUserView: function () {
             return {
+                itemId: 'service-users-card',
                 layout: 'border',
                 items: [
                     this.buildUserView(),
@@ -205,6 +210,7 @@ Ext.define(
             var rules = this.buildServiceRules();
             var emails = this.buildServiceEmails();
             return {
+                itemId: 'service-details-card',
                 layout: 'border',
                 items: [
                     details,

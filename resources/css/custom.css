@@ -90,3 +90,7 @@ table.smaller-font { font-size : small; }
 	padding: 20px;
 	height: 1%;
 }
+
+.pw-admin-frame {
+	background: #f4f7fa;
+}

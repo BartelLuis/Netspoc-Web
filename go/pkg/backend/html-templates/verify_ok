@@ -1,12 +1,20 @@
+<!doctype html>
+<html lang="de">
 <head>
-<title>Verifikation</title>
-<style type="text/css">
- body {font-family:sans-serif;} 
-</style>
-</head><h2>Erfolg</h2>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Verifikation</title>
+	<script src="/resources/js/theme.js"></script>
+	<style>body { font-family: sans-serif; }</style>
+	<link rel="stylesheet" href="/resources/css/theme-static.css">
 </head>
-
 <body>
-Ihr Kennwort wurde erfolgreich geändert.<br>
-Sie können sich jetzt mit dem neuen Kennwort anmelden.
+	<main class="pw-standalone">
+		<div class="pw-page-heading">
+			<h2>Erfolg</h2>
+			<button class="pw-theme-toggle" data-policyweb-theme-toggle type="button">Dark Mode</button>
+		</div>
+		<p>Ihr Kennwort wurde erfolgreich geändert. Sie können sich jetzt mit dem neuen Kennwort anmelden.</p>
+	</main>
 </body>
+</html>

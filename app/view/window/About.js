@@ -35,9 +35,7 @@ Ext.define(
                     border: false,
                     frame: false,
                     header: false,
-                    bodyStyle: {
-                        background: '#fff'
-                    },
+                    bodyCls: 'pw-about-window-body',
                     loader: {
                         url: 'backend6/get_about_info',
                         autoLoad: true,

@@ -34,7 +34,7 @@ Ext.define(
                 fixed     : true
             },
             {
-                header    : 'IP-Adressen',
+                header    : 'IP-Adresse / FQDN',
                 flex      : 2,
                 dataIndex : 'ip'
             },
@@ -43,7 +43,19 @@ Ext.define(
                 flex      : 2,
                 dataIndex : 'owner'
             }
-        ]
+        ],
+
+        buildViewConfig : function() {
+            return Ext.apply(
+                this.callParent(arguments),
+                {
+                    deferEmptyText : false,
+                    emptyText : '<div class="policyweb-empty-grid">' +
+                        'Für diesen Dienst sind keine Benutzerobjekte ' +
+                        'hinterlegt.</div>'
+                }
+            );
+        }
     }
 );
 

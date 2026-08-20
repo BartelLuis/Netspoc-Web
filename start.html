@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Policy-Web – Informationen</title>
+  <script src="resources/js/theme.js"></script>
   <style>
     :root { font: 14px Arial, sans-serif; color: #263746; background: #f5f8fb; }
     * { box-sizing: border-box; }
@@ -23,10 +24,14 @@
     li + li { margin-top: .4rem; }
     .version { color: #526574; font-size: .9rem; }
   </style>
+  <link rel="stylesheet" href="resources/css/theme-static.css">
 </head>
 <body>
 <main>
-  <h1>Policy-Web – Changelog</h1>
+  <div class="pw-page-heading">
+    <h1>Policy-Web – Changelog</h1>
+    <button class="pw-theme-toggle" data-policyweb-theme-toggle type="button">Dark Mode</button>
+  </div>
   <div class="grid">
     <section class="card changelog">
       <div id="changelog"><p class="version">Changelog wird geladen …</p></div>
@@ -34,6 +39,9 @@
   </div>
 </main>
 <script>
+  const themeToggle = document.querySelector('[data-policyweb-theme-toggle]');
+  if (window.self !== window.top) themeToggle.hidden = true;
+
   const escapeHTML = text => text.replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[char]);

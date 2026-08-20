@@ -24,6 +24,8 @@
 .icon-exclamation { background-image: url(/silk-icons/exclamation.png) !important; } 
 
 .icon-info { background-image: url(/silk-icons/information.png) !important; } 
+.icon-theme-dark { background-image: url(/silk-icons/moon_full.png) !important; }
+.icon-theme-light { background-image: url(/silk-icons/weather_sun.png) !important; }
 
 
 .icon-print-preview { background-image: url(../icons/document-print-preview-3.png)  !important; }

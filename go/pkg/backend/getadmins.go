@@ -6,15 +6,22 @@ import (
 
 func (s *state) getAdmins(w http.ResponseWriter, r *http.Request) {
 	history := s.getHistoryParamOrCurrentPolicy(r)
+	activeOwner := r.FormValue("active_owner")
+	if !s.requireOwnerAccess(w, r, activeOwner) {
+		return
+	}
 	owner := r.FormValue("owner")
 	if owner == "" {
-		owner = r.FormValue("active_owner")
+		owner = activeOwner
 	}
 	if owner == "" {
 		abort("Missing owner parameter")
 	}
 	records := make([]jsonMap, 0)
 	if owner != ":unknown" {
+		if !s.requireOwnerTarget(w, owner) {
+			return
+		}
 		emails := s.loadEmails(history, owner)
 		for _, e := range emails {
 			records = append(records, jsonMap{

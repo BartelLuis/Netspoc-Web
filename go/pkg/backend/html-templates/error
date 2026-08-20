@@ -1,16 +1,20 @@
+<!doctype html>
+<html lang="de">
 <head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>Fehler</title>
-	<style type="text/css">
-		body {
-			font-family: sans-serif;
-		}
-	</style>
+	<script src="/resources/js/theme.js"></script>
+	<style>body { font-family: sans-serif; }</style>
+	<link rel="stylesheet" href="/resources/css/theme-static.css">
 </head>
-
 <body>
-
-	<h2>Fehler</h2>
-	<p>
-		{{.}}
-	</p>
+	<main class="pw-standalone">
+		<div class="pw-page-heading">
+			<h2>Fehler</h2>
+			<button class="pw-theme-toggle" data-policyweb-theme-toggle type="button">Dark Mode</button>
+		</div>
+		<p>{{.}}</p>
+	</main>
 </body>
+</html>

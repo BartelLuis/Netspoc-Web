@@ -8,7 +8,13 @@ import (
 
 func (s *state) getAdminsWatchers(w http.ResponseWriter, r *http.Request) {
 	history := s.getHistoryParamOrCurrentPolicy(r)
+	if !s.requireOwnerAccess(w, r, r.FormValue("active_owner")) {
+		return
+	}
 	owner := r.FormValue("owner")
+	if !s.requireOwnerTarget(w, owner) {
+		return
+	}
 	watchers := s.loadWatchers(history, owner)
 	admins := s.loadEmails(history, owner)
 	combined := slices.Concat(watchers, admins)
