@@ -177,6 +177,7 @@ func (s *state) loadPolicyDraft() (*editablePolicy, error) {
 }
 
 func normalizeEditablePolicy(p *editablePolicy) {
+	normalizeCatalog(&p.NamingCatalog)
 	if p.FQDNs == nil {
 		p.FQDNs = []editableFQDN{}
 	}
@@ -195,6 +196,10 @@ func normalizeEditablePolicy(p *editablePolicy) {
 			rule.HasUser = strings.ToLower(strings.TrimSpace(rule.HasUser))
 			if rule.HasUser == "" {
 				rule.HasUser = "src"
+			}
+			if len(p.TargetContexts) != 0 && !stableIDRE.MatchString(rule.StableRuleID) {
+				rule.StableRuleID = newStableRuleID()
+				rule.ShortID = ""
 			}
 		}
 	}

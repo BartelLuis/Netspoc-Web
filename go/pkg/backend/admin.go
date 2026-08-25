@@ -19,6 +19,9 @@ import (
 
 type editablePolicy struct {
 	Name     string            `json:"name"`
+	Tenants  []tenant          `json:"tenants,omitempty"`
+	TargetContexts []targetContext `json:"target_contexts,omitempty"`
+	NamingCatalog namingCatalog `json:"naming_catalog,omitempty"`
 	Owners   []editableOwner   `json:"owners"`
 	Users    []editableUser    `json:"users"`
 	Networks []editableNetwork `json:"networks"`
@@ -46,6 +49,7 @@ type editableNetwork struct {
 	Name  string         `json:"name"`
 	CIDR  string         `json:"cidr"`
 	Owner string         `json:"owner"`
+	Zone  string         `json:"zone,omitempty"`
 	Hosts []editableHost `json:"hosts"`
 }
 
@@ -53,12 +57,14 @@ type editableHost struct {
 	Name  string `json:"name"`
 	IP    string `json:"ip"`
 	Owner string `json:"owner,omitempty"`
+	Zone  string `json:"zone,omitempty"`
 }
 
 type editableFQDN struct {
 	Name  string `json:"name"`
 	FQDN  string `json:"fqdn"`
 	Owner string `json:"owner"`
+	Zone  string `json:"zone,omitempty"`
 }
 
 type editableService struct {
@@ -74,6 +80,20 @@ type editableRule struct {
 	Sources      []string `json:"sources"`
 	Destinations []string `json:"destinations"`
 	Protocols    []string `json:"protocols"`
+	RuleGroup string `json:"rule_group,omitempty"`
+	Owner string `json:"owner,omitempty"`
+	ChangeReference string `json:"change_reference,omitempty"`
+	ReviewDate string `json:"review_date,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+	RollbackOwner string `json:"rollback_owner,omitempty"`
+	Purpose string `json:"purpose,omitempty"`
+	StableRuleID string `json:"stable_rule_id,omitempty"`
+	ShortID string `json:"short_id,omitempty"`
+	TenantMKZ string `json:"tenant_mkz,omitempty"`
+	TargetContext string `json:"target_context,omitempty"`
+	PolicyName string `json:"policy_name,omitempty"`
+	PolicyComment string `json:"policy_comment,omitempty"`
+	NamingVersion string `json:"naming_version,omitempty"`
 }
 
 var policyNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]*$`)
@@ -134,6 +154,41 @@ func (s *state) adminPolicy(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// adminPolicyNamePreview performs the same authoritative derivation used for
+// drafts, diffs and publication. It deliberately returns backend-generated
+// values only; submitted policy_name and policy_comment values are overwritten.
+func (s *state) adminPolicyNamePreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	current := s.readDraft()
+	if !hasPolicyRole(current, getEmailFromSession(r), "admin", "editor") {
+		writeError(w, "Policy editor role required", http.StatusForbidden)
+		return
+	}
+	p, err := decodePolicy(r)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	type preview struct {
+		Service string `json:"service"`
+		Index int `json:"index"`
+		Name string `json:"policy_name"`
+		Comment string `json:"policy_comment"`
+		ShortID string `json:"short_id"`
+		NamingVersion string `json:"naming_version"`
+	}
+	result := []preview{}
+	for _, service := range p.Services {
+		for i, rule := range service.Rules {
+			result = append(result, preview{service.Name, i, rule.PolicyName, rule.PolicyComment, rule.ShortID, rule.NamingVersion})
+		}
+	}
+	writeJSON(w, map[string]any{"success": true, "records": result, "policy": p})
 }
 
 func (s *state) adminDiff(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +344,7 @@ func decodePolicy(r *http.Request) (*editablePolicy, error) {
 
 func validateEditablePolicy(p *editablePolicy) error {
 	normalizeEditablePolicy(p)
+	if err := derivePolicyNames(p); err != nil { return err }
 	if !policyNameRE.MatchString(p.Name) {
 		return errors.New("policy name is required and may contain letters, digits, '.', '_', ':' and '-'")
 	}
@@ -660,6 +716,7 @@ func newPolicyVersion() string {
 
 func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
 	normalizeEditablePolicy(p)
+	if err := derivePolicyNames(p); err != nil { return err }
 	for _, u := range p.Users {
 		if u.Password != "" {
 			if err := SetUserPassword(s.config.UserDir, u.Email, u.Password); err != nil {
@@ -703,14 +760,16 @@ func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
 	}
 	for _, n := range p.Networks {
 		key := "network:" + n.Name
-		objects[key] = map[string]any{"ip": n.CIDR, "zone": "", "owner": n.Owner}
+		objects[key] = map[string]any{"ip": n.CIDR, "zone": n.Zone, "owner": n.Owner}
 		objectOwners[key] = n.Owner
 		networkOwner[key] = n.Owner
 		ownerNetworks[n.Owner] = append(ownerNetworks[n.Owner], key)
 		for _, h := range n.Hosts {
 			hostOwner := h.Owner
 			name := "host:" + h.Name
-			objects[name] = map[string]any{"ip": h.IP, "zone": "", "owner": hostOwner}
+			zone := h.Zone
+			if zone == "" { zone = n.Zone }
+			objects[name] = map[string]any{"ip": h.IP, "zone": zone, "owner": hostOwner}
 			objectOwners[name] = hostOwner
 			networkChildren[key] = append(networkChildren[key], name)
 			hostOwnerByName[name] = hostOwner
@@ -721,7 +780,7 @@ func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
 	}
 	for _, f := range p.FQDNs {
 		name := "fqdn:" + f.Name
-		objects[name] = map[string]any{"fqdn": f.FQDN, "zone": "", "owner": f.Owner}
+		objects[name] = map[string]any{"fqdn": f.FQDN, "zone": f.Zone, "owner": f.Owner}
 		objectOwners[name] = f.Owner
 		ownerFQDNs[f.Owner] = append(ownerFQDNs[f.Owner], name)
 	}
@@ -732,7 +791,7 @@ func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
 			if exportedHasUser == "none" {
 				exportedHasUser = ""
 			}
-			rules = append(rules, map[string]any{"action": rule.Action, "src": rule.Sources, "dst": rule.Destinations, "prt": rule.Protocols, "has_user": exportedHasUser})
+			rules = append(rules, map[string]any{"action": rule.Action, "src": rule.Sources, "dst": rule.Destinations, "prt": rule.Protocols, "has_user": exportedHasUser, "policy_name": rule.PolicyName, "policy_comment": rule.PolicyComment, "stable_rule_id": rule.StableRuleID, "short_id": rule.ShortID, "naming_version": rule.NamingVersion, "target_context": rule.TargetContext})
 
 			userObjects := []string{}
 			switch rule.HasUser {

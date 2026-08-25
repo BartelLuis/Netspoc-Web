@@ -68,6 +68,7 @@ func getMux() (*http.ServeMux, *state) {
 	needsLoginMux.HandleFunc("/set", s.setSessionData)
 	needsLoginMux.HandleFunc("/fortinet/status", s.getFortinetStatus)
 	needsLoginMux.HandleFunc("/admin/policy", s.adminPolicy)
+	needsLoginMux.HandleFunc("/admin/policy-name-preview", s.adminPolicyNamePreview)
 	needsLoginMux.HandleFunc("/admin/diff", s.adminDiff)
 	needsLoginMux.HandleFunc("/admin/revision", s.adminRevision)
 	needsLoginMux.HandleFunc("/admin/publish", s.adminPublish)
