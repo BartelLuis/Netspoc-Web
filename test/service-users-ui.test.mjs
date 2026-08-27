@@ -78,7 +78,7 @@ test('service user button targets its card by itemId and refreshes users', async
   assert.equal(card.layout.activeItem, usersCard);
   assert.equal(usersLoaded, 1);
   assert.equal(checkboxCalls.length, 1);
-  assert.equal(checkboxCalls[0].disable.expand_users, 1);
+  assert.equal(Object.keys(checkboxCalls[0].disable).join(','), 'display_property');
 });
 
 function fakeUsersStore() {

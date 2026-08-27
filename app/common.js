@@ -39,7 +39,7 @@ if (!Array.prototype.filter) {
     };
 }
 
-function userstring_or_data(data) {
+function render_rule_data(data) {
     var first = data[0];
     if (first === undefined) {
         return '';
@@ -64,21 +64,9 @@ function userstring_or_data(data) {
     }
 }
 
-function bold_user(node, what) {
+function render_rule_side(node, what) {
     var data = what === 'src' ? node.src : node.dst;
-    var cb = Ext.ComponentQuery.query("#cb_expand_users")
-    var exp_usr = cb[0].getValue()
-    if (exp_usr === false) {
-        if (node.has_user === what || node.has_user === 'both') {
-            return '<span style="font-weight:bold;">User</span>'
-        }
-        else {
-            return userstring_or_data(data)
-        }
-    }
-    else {
-        return userstring_or_data(data)
-    }
+    return render_rule_data(data);
 }
 
 function trim(str) {

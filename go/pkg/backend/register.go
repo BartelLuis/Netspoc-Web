@@ -2,118 +2,211 @@ package backend
 
 import (
 	"bufio"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
+	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	htmltemplate "html/template"
-	"math/rand"
+	"math/big"
 	"net"
 	"net/http"
 	"net/mail"
 	"net/smtp"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	texttemplate "text/template"
 	"time"
 )
 
+var attackFileMu sync.Mutex
+
 func (s *state) register(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+
 	session := GetGoSession(r)
 	email := r.FormValue("email")
-	if email == "" {
-		writeError(w, "Email is required", http.StatusBadRequest)
+	var err error
+	email, err = canonicalAccountEmail(email)
+	if err != nil {
+		writeError(w, "Invalid email", http.StatusBadRequest)
 		return
 	}
-	if email == "guest" {
-		writeError(w, "Can't set password for 'guest'", http.StatusBadRequest)
+	if !s.localPasswordIdentityAllowed(email) {
+		writeError(w, "Account is not eligible for local password authentication", http.StatusForbidden)
 		return
 	}
-	email = strings.ToLower(email)
-	err := s.checkEmailAuthorization(email)
+	err = s.checkEmailAuthorization(email)
 	if err != nil {
 		writeError(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	// Why do we need to check base URL in Perl?
 	err = s.checkAttack(r)
 	if err != nil {
 		writeError(w, err.Error(), http.StatusTooManyRequests)
 		return
 	}
 
-	password := generatePassword(10, true, true, true)
-	encoder := SSHAEncoder{}
-	var hashStr string
-	hashStr, err = encoder.EncodeAsString([]byte(password))
+	token := randomToken(32)
+	verificationURL, err := s.verificationURL(email, token)
 	if err != nil {
-		writeError(w, "Failed to encode password: "+err.Error(), http.StatusInternalServerError)
+		writeError(w, "Password registration is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	tokenSalt := fmt.Sprintf("%d", time.Now().UnixNano())
-	tokenHash := sha256.Sum256([]byte(tokenSalt + email))
-	token := hex.EncodeToString(tokenHash[:])
 	registerData := map[string]string{
-		"user":  email,
-		"hash":  hashStr,
-		"token": token}
+		"user": email, "token": token}
 	session.Put("register", registerData)
 	s.setAttack(r)
 	ip := GetClientIP(r)
-	base := r.Header.Get("Referer")
-	if base == "" {
-		writeError(w, "Missing Referer in header", http.StatusBadRequest)
+	err = s.sendVerificationEmail(email, verificationURL, ip)
+	if err != nil {
+		session.Delete("register")
+		writeError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	verifyUrl := fmt.Sprintf("backend6/verify?email=%s&token=%s", email, token)
-	url := strings.Replace(base, "passwd.html", verifyUrl, 1)
-	err = s.sendVerificationEmail(email, url, ip)
+	err = s.renderHtmlTemplate(w, "show_passwd", "")
 	if err != nil {
 		writeError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	err = s.renderHtmlTemplate(w, "show_passwd", password)
-	if err != nil {
-		writeError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+}
+
+type pendingRegistration struct {
+	Email string
+	Token string
+}
+
+type verificationConfirmation struct {
+	Email string
+	Token string
 }
 
 func (s *state) verify(w http.ResponseWriter, r *http.Request) {
-	reqEmail := r.FormValue("email")
-	reqToken := r.FormValue("token")
-	session := GetGoSession(r)
-	data := session.Get("register")
-	if data == nil {
-		writeError(w, "No registration in progress", http.StatusBadRequest)
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	registerData := data.(map[string]any)
-	email := registerData["user"].(string)
-	hash := registerData["hash"].(string)
-	token := registerData["token"].(string)
-	if registerData != nil && email == reqEmail && token == reqToken {
-		s.storePassword(w, email, hash)
-		session.Delete("register")
-		s.clearAttack(r)
-		err := s.renderHtmlTemplate(w, "verify_ok", "")
-		if err != nil {
-			writeError(w, err.Error(), http.StatusInternalServerError)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+
+	var reqEmail, reqToken string
+	if r.Method == http.MethodGet {
+		reqEmail = r.URL.Query().Get("email")
+		reqToken = r.URL.Query().Get("token")
+	} else {
+		if err := r.ParseForm(); err != nil {
+			writeError(w, "Invalid verification request", http.StatusBadRequest)
 			return
 		}
-	} else {
-		err := s.renderHtmlTemplate(w, "verify_fail", "")
-		if err != nil {
+		reqEmail = r.PostForm.Get("email")
+		reqToken = r.PostForm.Get("token")
+	}
+	reqEmail, err := canonicalAccountEmail(reqEmail)
+	if err != nil {
+		s.renderVerificationFailure(w)
+		return
+	}
+
+	session := GetGoSession(r)
+	registration, ok := pendingRegistrationFromSession(session)
+	if !ok || registration.Email != reqEmail || subtle.ConstantTimeCompare([]byte(registration.Token), []byte(reqToken)) != 1 {
+		s.renderVerificationFailure(w)
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		if err := s.renderHtmlTemplate(w, "verify_confirm", verificationConfirmation{Email: reqEmail, Token: reqToken}); err != nil {
 			writeError(w, err.Error(), http.StatusInternalServerError)
-			return
 		}
 		return
+	}
+
+	// Authorization and account source are checked again at the mutating step:
+	// the published policy may have changed after the mail was requested.
+	if !s.localPasswordIdentityAllowed(reqEmail) || s.checkEmailAuthorization(reqEmail) != nil {
+		s.renderVerificationFailure(w)
+		return
+	}
+	// The password is generated only after possession of the emailed token was
+	// proven by this explicit POST. It is never disclosed to the unauthenticated
+	// browser that initiated the request.
+	password := generatePassword(16, true, true, true)
+	hash, err := encodePassword(password)
+	if err != nil {
+		writeError(w, "Failed to create password", http.StatusInternalServerError)
+		return
+	}
+	if err := s.storePassword(reqEmail, hash); err != nil {
+		writeError(w, "Failed to save password", http.StatusInternalServerError)
+		return
+	}
+	session.Delete("register")
+	s.clearAttack(r)
+	if err := s.renderHtmlTemplate(w, "verify_ok", password); err != nil {
+		writeError(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *state) renderHtmlTemplate(w http.ResponseWriter, p, data string) error {
+func pendingRegistrationFromSession(session *GoSession) (pendingRegistration, bool) {
+	if session == nil {
+		return pendingRegistration{}, false
+	}
+	data := session.Get("register")
+	var result pendingRegistration
+	switch registerData := data.(type) {
+	case map[string]string:
+		result = pendingRegistration{Email: registerData["user"], Token: registerData["token"]}
+	case map[string]any:
+		var ok bool
+		if result.Email, ok = registerData["user"].(string); !ok {
+			return pendingRegistration{}, false
+		}
+		if result.Token, ok = registerData["token"].(string); !ok {
+			return pendingRegistration{}, false
+		}
+	default:
+		return pendingRegistration{}, false
+	}
+	if result.Email == "" || result.Token == "" {
+		return pendingRegistration{}, false
+	}
+	return result, true
+}
+
+func (s *state) renderVerificationFailure(w http.ResponseWriter) {
+	if err := s.renderHtmlTemplate(w, "verify_fail", ""); err != nil {
+		writeError(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *state) verificationURL(email, token string) (string, error) {
+	base, err := normalizedPublicBaseURL(s.config.PublicBaseURL)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	u = u.ResolveReference(&url.URL{Path: "backend6/verify"})
+	query := u.Query()
+	query.Set("email", email)
+	query.Set("token", token)
+	u.RawQuery = query.Encode()
+	return u.String(), nil
+}
+
+func (s *state) renderHtmlTemplate(w http.ResponseWriter, p string, data any) error {
 	tmplPath := path.Join(s.config.HTMLTemplate, p)
 	tmpl, err := htmltemplate.ParseFiles(tmplPath)
 	if err != nil {
@@ -126,19 +219,15 @@ func (s *state) renderHtmlTemplate(w http.ResponseWriter, p, data string) error 
 	return nil
 }
 
-func (s *state) storePassword(w http.ResponseWriter, email, hash string) {
-	userFile := fmt.Sprintf("%s/%s", s.config.UserDir, email)
-	store, err := GetUserStore(userFile)
+func (s *state) storePassword(email, hash string) error {
+	userFile, err := safeUserFile(s.config.UserDir, email)
 	if err != nil {
-		writeError(w, "Failed to get user store: "+err.Error(), http.StatusInternalServerError)
-		return
+		return err
 	}
-	store.Hash = hash
-	err = store.WriteToFile(userFile)
-	if err != nil {
-		writeError(w, "Failed to save user store: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	return updateUserStore(userFile, true, func(store *UserStore) (bool, error) {
+		store.Hash = hash
+		return true, nil
+	})
 }
 
 func (s *state) sendEmail(text string) error {
@@ -287,34 +376,95 @@ func (s *state) checkEmailAuthorization(email string) error {
 	return nil
 }
 
+func localPasswordIdentityAllowed(p *editablePolicy, email string) bool {
+	if p == nil {
+		return false
+	}
+	for _, user := range p.Users {
+		if strings.EqualFold(strings.TrimSpace(user.Email), email) {
+			return !strings.EqualFold(strings.TrimSpace(user.Source), "ldap")
+		}
+	}
+	// Legacy local accounts may be authorized by the generated email mapping
+	// without having been migrated into the editable user catalog yet.
+	return true
+}
+
+func (s *state) localPasswordIdentityAllowed(email string) bool {
+	p, version, err := s.latestPublicationSnapshot()
+	if err != nil {
+		return false
+	}
+	if version == "" {
+		p, err = s.loadPolicyDraft()
+		if err != nil {
+			return false
+		}
+	}
+	return localPasswordIdentityAllowed(p, email)
+}
+
 const (
 	letterBytes  = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	specialBytes = "!@#$%^&*()_+-=[]{}\\|;':\",.<>/?`~"
 	numBytes     = "0123456789"
 )
 
-func init() {
-	rand.New(rand.NewSource(time.Now().UnixNano()))
-}
-
 func generatePassword(length int, useLetters bool, useSpecial bool, useNum bool) string {
+	alphabet := ""
+	classes := []string{}
+	if useLetters {
+		alphabet += letterBytes
+		classes = append(classes, letterBytes)
+	}
+	if useSpecial {
+		alphabet += specialBytes
+		classes = append(classes, specialBytes)
+	}
+	if useNum {
+		alphabet += numBytes
+		classes = append(classes, numBytes)
+	}
+	if length <= 0 || alphabet == "" {
+		return ""
+	}
 	b := make([]byte, length)
-	for i := range b {
-		if useLetters {
-			b[i] = letterBytes[rand.Intn(len(letterBytes))]
-		} else if useSpecial {
-			b[i] = specialBytes[rand.Intn(len(specialBytes))]
-		} else if useNum {
-			b[i] = numBytes[rand.Intn(len(numBytes))]
-		}
+	i := 0
+	for ; i < len(classes) && i < len(b); i++ {
+		class := classes[i]
+		b[i] = class[secureRandomIndex(len(class))]
+	}
+	for ; i < len(b); i++ {
+		b[i] = alphabet[secureRandomIndex(len(alphabet))]
+	}
+	for i := len(b) - 1; i > 0; i-- {
+		j := secureRandomIndex(i + 1)
+		b[i], b[j] = b[j], b[i]
 	}
 	return string(b)
 }
 
+func secureRandomIndex(limit int) int {
+	n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(limit)))
+	if err != nil {
+		panic("failed to obtain secure random data")
+	}
+	return int(n.Int64())
+}
+
+func randomToken(length int) string {
+	b := make([]byte, length)
+	if _, err := cryptorand.Read(b); err != nil {
+		panic("failed to obtain secure random data")
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
 func (s *state) readAttackFile(r *http.Request) string {
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	dir := s.config.SessionDir
-	return fmt.Sprintf("%s/attack-%s", dir, ip)
+	// Hashing keeps attacker-controlled address text out of filesystem paths and
+	// produces portable names for both IPv4 and IPv6 clients.
+	digest := sha256.Sum256([]byte(GetClientIP(r)))
+	return filepath.Join(s.config.SessionDir, fmt.Sprintf("attack-%x", digest))
 }
 
 func (s *state) readAttackCount(r *http.Request) int {
@@ -332,7 +482,11 @@ func (s *state) readAttackCount(r *http.Request) int {
 
 func (s *state) storeAttackCount(r *http.Request, count int) error {
 	file := s.readAttackFile(r)
-	return os.WriteFile(file, []byte(strconv.Itoa(count)), 0644)
+	if err := os.WriteFile(file, []byte(strconv.Itoa(count)), 0600); err != nil {
+		return err
+	}
+	// WriteFile preserves the mode of an existing file.
+	return os.Chmod(file, 0600)
 }
 
 func (s *state) readAttackModified(r *http.Request) (time.Time, error) {
@@ -345,12 +499,16 @@ func (s *state) readAttackModified(r *http.Request) (time.Time, error) {
 }
 
 func (s *state) setAttack(r *http.Request) {
+	attackFileMu.Lock()
+	defer attackFileMu.Unlock()
 	count := s.readAttackCount(r)
 	count++
 	_ = s.storeAttackCount(r, count)
 }
 
 func (s *state) checkAttack(r *http.Request) error {
+	attackFileMu.Lock()
+	defer attackFileMu.Unlock()
 	count := s.readAttackCount(r)
 	if count == 0 {
 		return nil
@@ -371,6 +529,8 @@ func (s *state) checkAttack(r *http.Request) error {
 }
 
 func (s *state) clearAttack(r *http.Request) {
+	attackFileMu.Lock()
+	defer attackFileMu.Unlock()
 	file := s.readAttackFile(r)
 	_ = os.Remove(file)
 }
@@ -383,16 +543,17 @@ var requestHeaders = []string{"X-Client-Ip", "X-Forwarded-For",
 
 // returns IP address string; The IP address if known, defaulting to empty string.
 func GetClientIP(r *http.Request) string {
-
-	for _, header := range requestHeaders {
-		switch header {
-		case "X-Forwarded-For": // Load-balancers (AWS ELB) or proxies.
-			if host, correctIP := getClientIPFromXForwardedFor(r.Header.Get(header)); correctIP {
-				return host
-			}
-		default:
-			if host := r.Header.Get(header); isCorrectIP(host) {
-				return host
+	if trustProxyHeaders() {
+		for _, header := range requestHeaders {
+			switch header {
+			case "X-Forwarded-For": // Load-balancers (AWS ELB) or proxies.
+				if host, correctIP := getClientIPFromXForwardedFor(r.Header.Get(header)); correctIP {
+					return host
+				}
+			default:
+				if host := r.Header.Get(header); isCorrectIP(host) {
+					return host
+				}
 			}
 		}
 	}
@@ -401,6 +562,9 @@ func GetClientIP(r *http.Request) string {
 	host, _, splitHostPortError := net.SplitHostPort(r.RemoteAddr)
 	if splitHostPortError == nil && isCorrectIP(host) {
 		return host
+	}
+	if isCorrectIP(r.RemoteAddr) {
+		return r.RemoteAddr
 	}
 	return ""
 }

@@ -2,6 +2,8 @@ package backend
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,12 +13,134 @@ import (
 	"strings"
 )
 
-func (s *state) getHistoryParamOrCurrentPolicy(r *http.Request) string {
-	history := r.FormValue("history")
-	if history == "" {
-		return s.currentPolicy()
+type resolvedPolicyVersionContextKey struct{}
+
+var legacyHistoryDirRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}`)
+
+func safePolicyVersionName(version string) bool {
+	version = strings.TrimSpace(version)
+	return version != "" && policyNameRE.MatchString(version) &&
+		!strings.ContainsAny(version, `/\`) && filepath.Base(version) == version && filepath.Clean(version) == version
+}
+
+func isRealDirectory(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0
+}
+
+func policyDirectoryAllowsOwner(directory, version, owner string, requireChanged bool) bool {
+	if !safePolicyVersionName(version) || !policyNameRE.MatchString(owner) || !isRealDirectory(filepath.Join(directory, "owner", owner)) {
+		return false
 	}
-	return history
+	if requireChanged {
+		if info, err := os.Lstat(filepath.Join(directory, "owner", owner, "CHANGED")); err != nil || !info.Mode().IsRegular() {
+			return false
+		}
+	}
+	entry, err := getPolicyFromFile(directory)
+	return err == nil && entry["policy"] == version
+}
+
+// allowedPolicyVersions is the filesystem allowlist exposed by get_history:
+// immutable p... publications plus legacy date revisions that contain data for
+// the requested owner. A syntactically safe but unlisted sibling directory is
+// deliberately not sufficient.
+func (s *state) allowedPolicyVersions(owner string) (map[string]bool, error) {
+	allowed := map[string]bool{}
+	root := s.config.NetspocData
+	if current, err := getPolicyFromFile(filepath.Join(root, "current")); err == nil {
+		version := current["policy"]
+		if policyDirectoryAllowsOwner(filepath.Join(root, "current"), version, owner, false) {
+			allowed[version] = true
+		}
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() || !strings.HasPrefix(name, "p") || !safePolicyVersionName(name) {
+			continue
+		}
+		if policyDirectoryAllowsOwner(filepath.Join(root, name), name, owner, false) {
+			allowed[name] = true
+		}
+	}
+	historyRoot := filepath.Join(root, "history")
+	entries, err = os.ReadDir(historyRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return allowed, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() || !safePolicyVersionName(name) || !legacyHistoryDirRE.MatchString(name) {
+			continue
+		}
+		if policyDirectoryAllowsOwner(filepath.Join(historyRoot, name), name, owner, true) {
+			allowed[name] = true
+		}
+	}
+	return allowed, nil
+}
+
+func (s *state) resolvePolicyVersion(owner, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		requested = s.currentPolicy()
+	}
+	if !safePolicyVersionName(requested) {
+		return "", errors.New("invalid policy revision")
+	}
+	allowed, err := s.allowedPolicyVersions(owner)
+	if err != nil {
+		return "", fmt.Errorf("list policy revisions: %w", err)
+	}
+	if !allowed[requested] {
+		return "", errors.New("policy revision is unavailable for this owner")
+	}
+	return requested, nil
+}
+
+func bindResolvedPolicyVersion(r *http.Request, version string) {
+	*r = *r.WithContext(context.WithValue(r.Context(), resolvedPolicyVersionContextKey{}, version))
+}
+
+func (s *state) bindRequestedPolicyVersion(r *http.Request, owner string) error {
+	version, err := s.resolvePolicyVersion(owner, r.FormValue("history"))
+	if err != nil {
+		return err
+	}
+	bindResolvedPolicyVersion(r, version)
+	return nil
+}
+
+func (s *state) bindRequestedPolicyVersionForAnyOwner(r *http.Request, owners []string) error {
+	var lastErr error
+	for _, owner := range owners {
+		version, err := s.resolvePolicyVersion(owner, r.FormValue("history"))
+		if err == nil {
+			bindResolvedPolicyVersion(r, version)
+			return nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = errors.New("policy revision is unavailable")
+	}
+	return lastErr
+}
+
+func (s *state) getHistoryParamOrCurrentPolicy(r *http.Request) string {
+	if version, ok := r.Context().Value(resolvedPolicyVersionContextKey{}).(string); ok && safePolicyVersionName(version) {
+		return version
+	}
+	// History supplied by a client is never used before an owner-aware gate has
+	// resolved it. Falling back to current is safe for internal/test callers.
+	return s.currentPolicy()
 }
 
 func (s *state) currentPolicy() string {
@@ -149,8 +273,7 @@ func (s *state) generateHistory(r *http.Request) ([]map[string]string, error) {
 		}
 
 		dirName := entry.Name()
-		re := regexp.MustCompile(`^(\d\d\d\d-\d\d-\d\d)`)
-		if !re.MatchString(dirName) {
+		if !legacyHistoryDirRE.MatchString(dirName) {
 			continue
 		}
 		policyDir := filepath.Join(histPath, dirName)
@@ -163,6 +286,9 @@ func (s *state) generateHistory(r *http.Request) ([]map[string]string, error) {
 		policyEntry, err := getPolicyFromFile(policyDir)
 		if err != nil {
 			return nil, err
+		}
+		if policyEntry["policy"] != dirName {
+			continue
 		}
 
 		// If there wasn't added a new policy today, current policy

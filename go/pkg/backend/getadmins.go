@@ -5,11 +5,11 @@ import (
 )
 
 func (s *state) getAdmins(w http.ResponseWriter, r *http.Request) {
-	history := s.getHistoryParamOrCurrentPolicy(r)
 	activeOwner := r.FormValue("active_owner")
 	if !s.requireOwnerAccess(w, r, activeOwner) {
 		return
 	}
+	history := s.getHistoryParamOrCurrentPolicy(r)
 	owner := r.FormValue("owner")
 	if owner == "" {
 		owner = activeOwner

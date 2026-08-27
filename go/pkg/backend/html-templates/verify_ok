@@ -14,7 +14,9 @@
 			<h2>Erfolg</h2>
 			<button class="pw-theme-toggle" data-policyweb-theme-toggle type="button">Dark Mode</button>
 		</div>
-		<p>Ihr Kennwort wurde erfolgreich geändert. Sie können sich jetzt mit dem neuen Kennwort anmelden.</p>
+		<p>Ihr Kennwort wurde erfolgreich geändert. Speichern Sie es jetzt; es wird nur einmal angezeigt:</p>
+		<input type="text" readonly size="24" value="{{.}}">
+		<p>Sie können sich jetzt mit dem neuen Kennwort anmelden.</p>
 	</main>
 </body>
 </html>

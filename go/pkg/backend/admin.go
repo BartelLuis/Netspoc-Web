@@ -18,15 +18,15 @@ import (
 )
 
 type editablePolicy struct {
-	Name     string            `json:"name"`
-	Tenants  []tenant          `json:"tenants,omitempty"`
-	TargetContexts []targetContext `json:"target_contexts,omitempty"`
-	NamingCatalog namingCatalog `json:"naming_catalog,omitempty"`
-	Owners   []editableOwner   `json:"owners"`
-	Users    []editableUser    `json:"users"`
-	Networks []editableNetwork `json:"networks"`
-	FQDNs    []editableFQDN    `json:"fqdns"`
-	Services []editableService `json:"services"`
+	Name           string            `json:"name"`
+	Tenants        []tenant          `json:"tenants,omitempty"`
+	TargetContexts []targetContext   `json:"target_contexts,omitempty"`
+	NamingCatalog  namingCatalog     `json:"naming_catalog,omitempty"`
+	Owners         []editableOwner   `json:"owners"`
+	Users          []editableUser    `json:"users"`
+	Networks       []editableNetwork `json:"networks"`
+	FQDNs          []editableFQDN    `json:"fqdns"`
+	Services       []editableService `json:"services"`
 }
 
 type editableOwner struct {
@@ -40,9 +40,16 @@ type editableOwner struct {
 }
 
 type editableUser struct {
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	Password string `json:"password,omitempty"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+	// Password exists only for source compatibility with older in-memory
+	// callers. Credentials are never part of policy JSON; local accounts are
+	// activated through register/verify or the create-user command.
+	Password    string `json:"-"`
+	Source      string `json:"source,omitempty"`
+	DirectoryID string `json:"directory_id,omitempty"`
+	Username    string `json:"username,omitempty"`
+	Active      bool   `json:"active,omitempty"`
 }
 
 type editableNetwork struct {
@@ -75,42 +82,81 @@ type editableService struct {
 }
 
 type editableRule struct {
-	Action       string   `json:"action"`
-	HasUser      string   `json:"has_user"`
-	Sources      []string `json:"sources"`
-	Destinations []string `json:"destinations"`
-	Protocols    []string `json:"protocols"`
-	RuleGroup string `json:"rule_group,omitempty"`
-	Owner string `json:"owner,omitempty"`
-	ChangeReference string `json:"change_reference,omitempty"`
-	ReviewDate string `json:"review_date,omitempty"`
-	ExpiresAt string `json:"expires_at,omitempty"`
-	RollbackOwner string `json:"rollback_owner,omitempty"`
-	Purpose string `json:"purpose,omitempty"`
-	StableRuleID string `json:"stable_rule_id,omitempty"`
-	ShortID string `json:"short_id,omitempty"`
-	TenantMKZ string `json:"tenant_mkz,omitempty"`
-	TargetContext string `json:"target_context,omitempty"`
-	PolicyName string `json:"policy_name,omitempty"`
-	PolicyComment string `json:"policy_comment,omitempty"`
-	NamingVersion string `json:"naming_version,omitempty"`
+	Action          string   `json:"action"`
+	HasUser         string   `json:"has_user"`
+	Sources         []string `json:"sources"`
+	Destinations    []string `json:"destinations"`
+	Protocols       []string `json:"protocols"`
+	RuleGroup       string   `json:"rule_group,omitempty"`
+	Owner           string   `json:"owner,omitempty"`
+	ChangeReference string   `json:"change_reference,omitempty"`
+	ReviewDate      string   `json:"review_date,omitempty"`
+	ExpiresAt       string   `json:"expires_at,omitempty"`
+	RollbackOwner   string   `json:"rollback_owner,omitempty"`
+	Purpose         string   `json:"purpose,omitempty"`
+	StableRuleID    string   `json:"stable_rule_id,omitempty"`
+	ShortID         string   `json:"short_id,omitempty"`
+	TenantMKZ       string   `json:"tenant_mkz,omitempty"`
+	TargetContext   string   `json:"target_context,omitempty"`
+	PolicyName      string   `json:"policy_name,omitempty"`
+	PolicyComment   string   `json:"policy_comment,omitempty"`
+	NamingVersion   string   `json:"naming_version,omitempty"`
+}
+
+// policyChange is the immutable reviewer-facing representation of a policy
+// difference. Before and After intentionally remain structured JSON values;
+// encoding them as JSON strings would force reviewers to trust an opaque blob
+// and made field-level changes (including server-derived rule fields) easy to
+// overlook.
+type policyChange struct {
+	Type         string              `json:"type"`
+	Name         string              `json:"name"`
+	Change       string              `json:"change"`
+	Path         string              `json:"path"`
+	Before       any                 `json:"before"`
+	After        any                 `json:"after"`
+	FieldChanges []policyFieldChange `json:"field_changes,omitempty"`
+}
+
+type policyFieldChange struct {
+	Path   string `json:"path"`
+	Before any    `json:"before"`
+	After  any    `json:"after"`
 }
 
 var policyNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]*$`)
 
 func (s *state) adminStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	initialized := s.policyInitialized()
 	result := map[string]any{"success": true, "initialized": initialized}
 	if initialized && loggedIn(r) {
 		result["authenticated"] = true
+		actor := strings.ToLower(strings.TrimSpace(getEmailFromSession(r)))
+		result["current_user"] = actor
 		p := s.readDraft()
-		role := policyRole(p, getEmailFromSession(r))
+		role := policyRole(s.authorizationPolicy(), actor)
 		result["role"] = role
 		if role == "admin" || role == "editor" {
 			result["policy"] = p
+		}
+		if role == "admin" || role == "editor" || role == "reviewer" || role == "deployer" {
 			if revisions, err := s.listRevisions(); err == nil {
 				result["revisions"] = revisions
 			}
+		}
+		if meta, err := s.draftInfo(); err == nil {
+			result["draft_version"], result["draft_updated_at"], result["draft_updated_by"] = meta.Version, meta.UpdatedAt, meta.UpdatedBy
+		}
+		if version, err := s.latestPublicationVersion(); err == nil {
+			result["current_version"] = version
+		}
+		if role == "admin" {
+			active, settings := s.effectiveMaintenance()
+			result["maintenance"] = map[string]any{"active": active, "settings": settings}
 		}
 	}
 	writeJSON(w, result)
@@ -123,6 +169,16 @@ func (s *state) adminBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := decodePolicy(r)
 	if err == nil {
+		err = protectDirectoryUsers(nil, p)
+	}
+	if err == nil {
+		err = enforceNamingCatalogVersion(nil, p)
+	}
+	if err == nil {
+		protectRuleIdentities(nil, p)
+		err = validateEditablePolicy(p)
+	}
+	if err == nil {
 		err = s.publishPolicy(p)
 	}
 	if err != nil {
@@ -133,24 +189,60 @@ func (s *state) adminBootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *state) adminPolicy(w http.ResponseWriter, r *http.Request) {
-	p := s.readDraft()
-	if !hasPolicyRole(p, getEmailFromSession(r), "admin", "editor") {
+	current := s.readDraft()
+	actor := getEmailFromSession(r)
+	role := policyRole(s.authorizationPolicy(), actor)
+	if role != "admin" && role != "editor" {
+		s.audit(actor, "draft.access", "denied", nil)
 		writeError(w, "Policy editor role required", http.StatusForbidden)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{"success": true, "policy": s.readDraft()})
+		meta, _ := s.draftInfo()
+		writeJSON(w, map[string]any{"success": true, "policy": current, "draft_version": meta.Version, "draft_updated_at": meta.UpdatedAt, "draft_updated_by": meta.UpdatedBy})
 	case http.MethodPost:
 		p, err := decodePolicy(r)
 		if err == nil {
-			err = s.saveDraft(p)
+			err = protectDirectoryUsers(current, p)
+		}
+		if err == nil {
+			err = enforceNamingCatalogVersion(current, p)
+		}
+		if err == nil {
+			protectRuleIdentities(current, p)
+		}
+		if err == nil && role == "editor" {
+			err = enforceEditorPolicyScope(current, p)
+		}
+		if err == nil {
+			err = validateEditablePolicy(p)
+		}
+		if err == nil {
+			var expected *int64
+			expected, err = draftVersionFromRequest(r)
+			if err == nil && expected == nil && s.policyInitialized() {
+				err = errors.New("X-Policy-Draft-Version is required")
+			}
+			if err == nil {
+				var meta draftMetadata
+				meta, err = s.saveDraftAs(p, actor, expected)
+				if err == nil {
+					s.audit(actor, "draft.save", "success", map[string]any{"draft_version": meta.Version})
+					writeJSON(w, map[string]any{"success": true, "policy": p, "draft_version": meta.Version, "draft_updated_at": meta.UpdatedAt, "draft_updated_by": meta.UpdatedBy})
+					return
+				}
+			}
 		}
 		if err != nil {
-			writeError(w, err.Error(), http.StatusBadRequest)
+			status := http.StatusBadRequest
+			if errors.Is(err, errDraftConflict) {
+				status = http.StatusConflict
+			}
+			s.audit(actor, "draft.save", "failed", map[string]any{"error": err.Error()})
+			writeError(w, err.Error(), status)
 			return
 		}
-		writeJSON(w, map[string]any{"success": true})
 	default:
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -165,21 +257,37 @@ func (s *state) adminPolicyNamePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := s.readDraft()
-	if !hasPolicyRole(current, getEmailFromSession(r), "admin", "editor") {
+	authorization := s.authorizationPolicy()
+	if !hasPolicyRole(authorization, getEmailFromSession(r), "admin", "editor") {
 		writeError(w, "Policy editor role required", http.StatusForbidden)
 		return
 	}
 	p, err := decodePolicy(r)
+	if err == nil {
+		err = protectDirectoryUsers(current, p)
+	}
+	if err == nil {
+		err = enforceNamingCatalogVersion(current, p)
+	}
+	if err == nil {
+		protectRuleIdentities(current, p)
+	}
+	if err == nil && policyRole(authorization, getEmailFromSession(r)) == "editor" {
+		err = enforceEditorPolicyScope(current, p)
+	}
+	if err == nil {
+		err = validateEditablePolicy(p)
+	}
 	if err != nil {
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	type preview struct {
-		Service string `json:"service"`
-		Index int `json:"index"`
-		Name string `json:"policy_name"`
-		Comment string `json:"policy_comment"`
-		ShortID string `json:"short_id"`
+		Service       string `json:"service"`
+		Index         int    `json:"index"`
+		Name          string `json:"policy_name"`
+		Comment       string `json:"policy_comment"`
+		ShortID       string `json:"short_id"`
 		NamingVersion string `json:"naming_version"`
 	}
 	result := []preview{}
@@ -192,44 +300,66 @@ func (s *state) adminPolicyNamePreview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *state) adminDiff(w http.ResponseWriter, r *http.Request) {
-	current := s.readDraft()
-	if !hasPolicyRole(current, getEmailFromSession(r), "admin", "editor") {
-		writeError(w, "Policy editor role required", http.StatusForbidden)
-		return
+	writeError(w, "The legacy diff endpoint is disabled; use /admin/stage with comment, change_reference and draft_version", http.StatusGone)
+}
+
+// protectDirectoryUsers keeps directory identity fields server-owned. Only
+// role and effective email address may be changed in policy administration.
+func protectDirectoryUsers(current, next *editablePolicy) error {
+	existing := map[string]editableUser{}
+	if current != nil {
+		for _, user := range current.Users {
+			if strings.EqualFold(strings.TrimSpace(user.Source), "ldap") {
+				id := strings.TrimSpace(user.DirectoryID)
+				if id != "" {
+					user.Source = "ldap"
+					user.DirectoryID = id
+					existing[id] = user
+				}
+			}
+		}
 	}
-	p, err := decodePolicy(r)
-	if err != nil {
-		writeError(w, err.Error(), http.StatusBadRequest)
-		return
+	seen := map[string]bool{}
+	for i := range next.Users {
+		user := &next.Users[i]
+		id := strings.TrimSpace(user.DirectoryID)
+		if !strings.EqualFold(strings.TrimSpace(user.Source), "ldap") && id == "" {
+			continue
+		}
+		if id == "" {
+			return fmt.Errorf("LDAP users require a directory_id")
+		}
+		old, ok := existing[id]
+		if !ok {
+			return fmt.Errorf("LDAP users can only be created by directory sync")
+		}
+		if seen[id] {
+			return fmt.Errorf("LDAP directory_id %q is duplicated", id)
+		}
+		user.Source = "ldap"
+		user.DirectoryID = old.DirectoryID
+		user.Username = old.Username
+		user.Active = old.Active
+		user.Password = ""
+		seen[old.DirectoryID] = true
 	}
-	previous, err := s.latestPublication()
-	if err != nil {
-		writeError(w, err.Error(), http.StatusInternalServerError)
-		return
+	for id, user := range existing {
+		if !seen[id] {
+			next.Users = append(next.Users, user)
+		}
 	}
-	baseVersion, err := s.latestPublicationVersion()
-	if err != nil {
-		writeError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	version := newPolicyVersion()
-	changes := diffPolicies(previous, p)
-	hash, err := approvalHash(version, previous, p)
-	if err != nil {
-		writeError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := s.storeRevision(version, baseVersion, p, changes); err != nil {
-		writeError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"success": true, "policy_id": version, "approval": hash, "changes": changes})
+	return nil
 }
 
 func (s *state) adminPublish(w http.ResponseWriter, r *http.Request) {
-	current := s.readDraft()
-	if !hasPolicyRole(current, getEmailFromSession(r), "admin") {
-		writeError(w, "Policy administrator role required", http.StatusForbidden)
+	if r.Method != http.MethodPost {
+		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	actor := getEmailFromSession(r)
+	if !hasPolicyRole(s.authorizationPolicy(), actor, "admin", "reviewer") {
+		s.audit(actor, "revision.publish", "denied", nil)
+		writeError(w, "Policy reviewer role required", http.StatusForbidden)
 		return
 	}
 	defer r.Body.Close()
@@ -237,84 +367,106 @@ func (s *state) adminPublish(w http.ResponseWriter, r *http.Request) {
 		PolicyID string `json:"policy_id"`
 		Approval string `json:"approval"`
 	}
-	err := json.NewDecoder(io.LimitReader(r.Body, 2<<20)).Decode(&request)
-	var revision *editablePolicy
-	var revisionBase string
+	err := decodeJSONRequest(w, r, 2<<20, &request)
+	var record *policyRevisionRecord
 	if err == nil && request.PolicyID == "" {
 		err = errors.New("policy_id is required")
 	}
 	if err == nil {
-		revision, revisionBase, err = s.loadRevision(request.PolicyID)
+		record, err = s.loadRevisionRecord(request.PolicyID, true)
 	}
-	p := revision
+	var p *editablePolicy
+	if record != nil {
+		p = record.Policy
+	}
+	if err == nil && (record.CreatedBy == "" || strings.EqualFold(record.CreatedBy, actor)) {
+		err = errors.New("revision creator may not approve their own revision")
+	}
+	if err == nil {
+		err = validateStagedRevision(record)
+	}
+	if err == nil && revisionValidationHasErrors(record.Validation) {
+		err = errors.New("revision validation contains blocking errors")
+	}
 	if err == nil {
 		err = validateEditablePolicy(p)
 	}
-	previous, previousErr := s.latestPublication()
-	if err == nil && previousErr != nil {
-		err = previousErr
+	previous, currentBase, snapshotErr := s.latestPublicationSnapshot()
+	if err == nil && snapshotErr != nil {
+		err = snapshotErr
 	}
-	currentBase, baseErr := s.latestPublicationVersion()
-	if err == nil && baseErr != nil {
-		err = baseErr
-	}
-	if err == nil && revisionBase != currentBase {
+	if err == nil && record.Base != currentBase {
 		err = errors.New("the base policy changed; create a new diff")
 	}
 	var hash string
 	if err == nil {
-		hash, err = approvalHash(request.PolicyID, previous, p)
+		hash, err = revisionApprovalHash(request.PolicyID, previous, p, record.DeploymentPlan, record.Validation)
 	}
 	if err == nil && (request.Approval == "" || request.Approval != hash) {
 		err = errors.New("policy changed after diff approval; create and confirm a new diff")
 	}
 	if err == nil {
-		err = s.publishPolicyVersion(p, request.PolicyID)
-	}
-	if err == nil {
-		err = s.markRevisionPublished(request.PolicyID)
+		err = s.publishPolicyVersionBy(p, request.PolicyID, actor)
 	}
 	if err != nil {
-		writeError(w, err.Error(), http.StatusBadRequest)
+		s.audit(actor, "revision.publish", "failed", map[string]any{"policy_id": request.PolicyID, "error": err.Error()})
+		status := http.StatusBadRequest
+		if errors.Is(err, errDeploymentRunning) || errors.Is(err, errPublicationRequiresDeployment) {
+			status = http.StatusConflict
+		}
+		writeError(w, err.Error(), status)
 		return
 	}
-	writeJSON(w, map[string]any{"success": true})
+	s.audit(actor, "revision.publish", "success", map[string]any{"policy_id": request.PolicyID, "created_by": record.CreatedBy})
+	writeJSON(w, map[string]any{"success": true, "approved_by": actor})
 }
 
 func (s *state) adminRevision(w http.ResponseWriter, r *http.Request) {
-	current := s.readDraft()
-	if !hasPolicyRole(current, getEmailFromSession(r), "admin", "editor") {
+	if r.Method != http.MethodGet {
+		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	actor := getEmailFromSession(r)
+	if !hasPolicyRole(s.authorizationPolicy(), actor, "admin", "editor", "reviewer", "deployer") {
+		s.audit(actor, "revision.read", "denied", nil)
 		writeError(w, "Policy editor role required", http.StatusForbidden)
 		return
 	}
 	version := r.FormValue("policy_id")
-	p, base, err := s.loadRevision(version)
-	currentBase, baseErr := s.latestPublicationVersion()
-	if err == nil && baseErr != nil {
-		err = baseErr
-	}
-	if err == nil && base != currentBase {
-		err = errors.New("the base policy changed; create a new diff")
-	}
-	previous, previousErr := s.latestPublication()
-	if err == nil && previousErr != nil {
-		err = previousErr
+	record, err := s.loadRevisionRecord(version, false)
+	var p *editablePolicy
+	if record != nil {
+		p = record.Policy
 	}
 	var approval string
-	if err == nil {
-		approval, err = approvalHash(version, previous, p)
+	if err == nil && record.Status == "pending" {
+		previous, currentBase, snapshotErr := s.latestPublicationSnapshot()
+		if snapshotErr != nil {
+			err = snapshotErr
+		}
+		if err == nil && record.Base != currentBase {
+			err = errors.New("the base policy changed; create a new diff")
+		}
+		if err == nil {
+			approval, err = revisionApprovalHash(version, previous, p, record.DeploymentPlan, record.Validation)
+		}
 	}
 	if err != nil {
+		s.audit(actor, "revision.read", "failed", map[string]any{"policy_id": version, "error": err.Error()})
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{"success": true, "policy_id": version, "policy": p, "approval": approval, "changes": diffPolicies(previous, p)})
+	s.audit(actor, "revision.read", "success", map[string]any{"policy_id": version})
+	writeJSON(w, map[string]any{"success": true, "policy_id": version, "status": record.Status, "policy": p, "approval": approval, "changes": record.Changes, "created_by": record.CreatedBy, "approved_by": record.ApprovedBy, "comment": record.Comment, "change_reference": record.ChangeReference, "findings": record.Findings, "deployment_plan": record.DeploymentPlan, "validation": record.Validation, "commands": revisionCommands(record.DeploymentPlan)})
 }
 
 func policyRole(p *editablePolicy, email string) string {
 	email = strings.ToLower(email)
 	for i, user := range p.Users {
 		if strings.ToLower(user.Email) == email {
+			if strings.EqualFold(user.Source, "ldap") && !user.Active {
+				return ""
+			}
 			if user.Role == "" && i == 0 {
 				return "admin"
 			}
@@ -339,17 +491,21 @@ func decodePolicy(r *http.Request) (*editablePolicy, error) {
 	if err := dec.Decode(&p); err != nil {
 		return nil, fmt.Errorf("invalid policy: %w", err)
 	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return nil, errors.New("invalid policy: multiple JSON documents")
+	}
 	return &p, validateEditablePolicy(&p)
 }
 
 func validateEditablePolicy(p *editablePolicy) error {
 	normalizeEditablePolicy(p)
-	if err := derivePolicyNames(p); err != nil { return err }
 	if !policyNameRE.MatchString(p.Name) {
 		return errors.New("policy name is required and may contain letters, digits, '.', '_', ':' and '-'")
 	}
 	owners := map[string]bool{}
 	users := map[string]bool{}
+	effectiveUsers := map[string]bool{}
+	directoryIDs := map[string]bool{}
 	objects := map[string]bool{}
 	for i := range p.Owners {
 		o := &p.Owners[i]
@@ -362,8 +518,33 @@ func validateEditablePolicy(p *editablePolicy) error {
 		}
 	}
 	for i := range p.Users {
-		p.Users[i].Email = strings.ToLower(strings.TrimSpace(p.Users[i].Email))
-		email := p.Users[i].Email
+		email, emailErr := canonicalAccountEmail(p.Users[i].Email)
+		if emailErr != nil {
+			return fmt.Errorf("invalid user email")
+		}
+		p.Users[i].Email = email
+		source := strings.ToLower(strings.TrimSpace(p.Users[i].Source))
+		directoryID := strings.TrimSpace(p.Users[i].DirectoryID)
+		switch source {
+		case "ldap":
+			if directoryID == "" {
+				return fmt.Errorf("LDAP user %q requires a directory_id", email)
+			}
+			if directoryIDs[directoryID] {
+				return fmt.Errorf("LDAP directory_id %q is duplicated", directoryID)
+			}
+			directoryIDs[directoryID] = true
+			p.Users[i].Source = "ldap"
+			p.Users[i].DirectoryID = directoryID
+		case "", "local":
+			if directoryID != "" {
+				return fmt.Errorf("local user %q must not have a directory_id", email)
+			}
+			p.Users[i].Source = source
+			p.Users[i].DirectoryID = ""
+		default:
+			return fmt.Errorf("user %q has invalid source %q", email, p.Users[i].Source)
+		}
 		if p.Users[i].Role == "" {
 			if i == 0 {
 				p.Users[i].Role = "admin"
@@ -371,15 +552,17 @@ func validateEditablePolicy(p *editablePolicy) error {
 				p.Users[i].Role = "viewer"
 			}
 		}
-		if !slices.Contains([]string{"admin", "editor", "viewer"}, p.Users[i].Role) {
+		if !slices.Contains([]string{"admin", "editor", "reviewer", "deployer", "viewer"}, p.Users[i].Role) {
 			return fmt.Errorf("user %q has invalid role %q", email, p.Users[i].Role)
 		}
-		if !strings.Contains(email, "@") || users[email] {
+		if users[email] {
 			return fmt.Errorf("invalid or duplicate user %q", email)
 		}
 		users[email] = true
+		effectiveUsers[email] = !strings.EqualFold(strings.TrimSpace(p.Users[i].Source), "ldap") || p.Users[i].Active
 	}
 	hasAdmin := false
+	loginAuthorizedUsers := map[string]bool{}
 	for i := range p.Owners {
 		for j := range p.Owners[i].Admins {
 			p.Owners[i].Admins[j] = strings.ToLower(strings.TrimSpace(p.Owners[i].Admins[j]))
@@ -390,8 +573,15 @@ func validateEditablePolicy(p *editablePolicy) error {
 		for j := range p.Owners[i].Watchers {
 			p.Owners[i].Watchers[j] = strings.ToLower(strings.TrimSpace(p.Owners[i].Watchers[j]))
 		}
-		if len(p.Owners[i].Admins) != 0 {
-			hasAdmin = true
+		for _, email := range p.Owners[i].Admins {
+			if effectiveUsers[email] {
+				hasAdmin = true
+			}
+		}
+		for _, email := range slices.Concat(p.Owners[i].Admins, p.Owners[i].Users) {
+			if effectiveUsers[email] {
+				loginAuthorizedUsers[email] = true
+			}
 		}
 		assigned := slices.Concat(p.Owners[i].Admins, p.Owners[i].Users, p.Owners[i].Watchers)
 		for _, email := range assigned {
@@ -407,13 +597,20 @@ func validateEditablePolicy(p *editablePolicy) error {
 		return errors.New("at least one owner administrator is required")
 	}
 	hasPolicyAdmin := false
+	hasLoginCapablePolicyAdmin := false
 	for _, user := range p.Users {
-		if user.Role == "admin" {
+		if user.Role == "admin" && (!strings.EqualFold(strings.TrimSpace(user.Source), "ldap") || user.Active) {
 			hasPolicyAdmin = true
+			if loginAuthorizedUsers[user.Email] {
+				hasLoginCapablePolicyAdmin = true
+			}
 		}
 	}
 	if !hasPolicyAdmin {
 		return errors.New("at least one policy administrator is required")
+	}
+	if !hasLoginCapablePolicyAdmin {
+		return errors.New("at least one active policy administrator must be assigned to an owner as administrator or user")
 	}
 	for _, owner := range p.Owners {
 		if owner.Parent != "" && !owners[owner.Parent] {
@@ -538,6 +735,9 @@ func validateEditablePolicy(p *editablePolicy) error {
 			if len(rule.Sources) == 0 || len(rule.Destinations) == 0 || len(rule.Protocols) == 0 {
 				return fmt.Errorf("service %q rules require source, destination and protocol", svc.Name)
 			}
+			if err := validateRuleLifecycle(rule, time.Now()); err != nil {
+				return fmt.Errorf("service %q rule lifecycle: %w", svc.Name, err)
+			}
 			for _, ref := range rule.Sources {
 				if strings.HasPrefix(ref, "fqdn:") {
 					return fmt.Errorf("service %q may only use FQDN object %q as a destination", svc.Name, ref)
@@ -553,7 +753,7 @@ func validateEditablePolicy(p *editablePolicy) error {
 			}
 		}
 	}
-	return nil
+	return derivePolicyNames(p)
 }
 
 func hostNameFromIP(ip string) string {
@@ -620,68 +820,177 @@ func ownerScopeContains(ownerByName map[string]editableOwner, reader, target str
 }
 
 func approvalHash(policyID string, previous, next *editablePolicy) (string, error) {
+	return revisionApprovalHash(policyID, previous, next, nil, nil)
+}
+
+func revisionApprovalHash(policyID string, previous, next *editablePolicy, deploymentPlan, validation any) (string, error) {
+	canonicalPlan, err := canonicalJSONValue(deploymentPlan)
+	if err != nil {
+		return "", err
+	}
+	canonicalValidation, err := canonicalJSONValue(validation)
+	if err != nil {
+		return "", err
+	}
 	data, err := json.Marshal(struct {
-		PolicyID string          `json:"policy_id"`
-		Previous *editablePolicy `json:"previous"`
-		Next     *editablePolicy `json:"next"`
-	}{policyID, previous, next})
+		PolicyID       string          `json:"policy_id"`
+		Previous       *editablePolicy `json:"previous"`
+		Next           *editablePolicy `json:"next"`
+		DeploymentPlan any             `json:"deployment_plan"`
+		Validation     any             `json:"validation"`
+	}{policyID, previous, next, canonicalPlan, canonicalValidation})
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
 }
 
-func diffPolicies(old, next *editablePolicy) []map[string]string {
-	result := []map[string]string{}
-	diffNamed := func(kind string, oldItems, newItems any) {
-		oldMap := namedItems(oldItems)
-		newMap := namedItems(newItems)
+func diffPolicies(old, next *editablePolicy) []policyChange {
+	result := []policyChange{}
+	appendChange := func(kind, name, path, change string, before, after any) {
+		entry := policyChange{
+			Type: kind, Name: name, Path: path, Change: change,
+			Before: canonicalDiffValue(before), After: canonicalDiffValue(after),
+		}
+		if change == "changed" {
+			entry.FieldChanges = diffStructuredFields(entry.Before, entry.After, path)
+		}
+		result = append(result, entry)
+	}
+	diffNamed := func(kind, keyField, collectionPath string, oldItems, newItems any) {
+		oldMap := namedItems(oldItems, keyField)
+		newMap := namedItems(newItems, keyField)
 		for name, item := range newMap {
-			change := "added"
+			path := collectionPath + "/" + jsonPointerSegment(name)
 			if previous, ok := oldMap[name]; ok {
 				if reflect.DeepEqual(previous, item) {
 					continue
 				}
-				change = "changed"
+				appendChange(kind, name, path, "changed", previous, item)
+				continue
 			}
-			result = append(result, map[string]string{"type": kind, "name": name, "change": change})
+			appendChange(kind, name, path, "added", nil, item)
 		}
-		for name := range oldMap {
+		for name, item := range oldMap {
 			if _, ok := newMap[name]; !ok {
-				result = append(result, map[string]string{"type": kind, "name": name, "change": "removed"})
+				appendChange(kind, name, collectionPath+"/"+jsonPointerSegment(name), "removed", item, nil)
 			}
 		}
 	}
 	if old == nil {
 		old = &editablePolicy{}
 	}
-	diffNamed("user", old.Users, next.Users)
-	diffNamed("owner", old.Owners, next.Owners)
-	diffNamed("network", old.Networks, next.Networks)
-	diffNamed("fqdn", old.FQDNs, next.FQDNs)
-	diffNamed("service", old.Services, next.Services)
-	slices.SortFunc(result, func(a, b map[string]string) int { return strings.Compare(a["type"]+a["name"], b["type"]+b["name"]) })
+	if next == nil {
+		next = &editablePolicy{}
+	}
+	if old.Name != next.Name {
+		name := next.Name
+		if name == "" {
+			name = old.Name
+		}
+		appendChange("policy", name, "/name", "changed", old.Name, next.Name)
+	}
+	diffNamed("user", "email", "/users", old.Users, next.Users)
+	diffNamed("owner", "name", "/owners", old.Owners, next.Owners)
+	diffNamed("tenant", "mkz", "/tenants", old.Tenants, next.Tenants)
+	diffNamed("target_context", "name", "/target_contexts", old.TargetContexts, next.TargetContexts)
+	diffNamed("network", "name", "/networks", old.Networks, next.Networks)
+	diffNamed("fqdn", "name", "/fqdns", old.FQDNs, next.FQDNs)
+	diffNamed("service", "name", "/services", old.Services, next.Services)
+	if !reflect.DeepEqual(old.NamingCatalog, next.NamingCatalog) {
+		appendChange("naming_catalog", "Naming-Katalog", "/naming_catalog", "changed", old.NamingCatalog, next.NamingCatalog)
+	}
+	slices.SortFunc(result, func(a, b policyChange) int { return strings.Compare(a.Type+a.Name, b.Type+b.Name) })
 	return result
 }
 
-func namedItems(items any) map[string]any {
+func namedItems(items any, keyField string) map[string]any {
 	result := map[string]any{}
 	data, _ := json.Marshal(items)
 	var values []map[string]any
 	_ = json.Unmarshal(data, &values)
 	for _, value := range values {
-		name, _ := value["name"].(string)
-		if name == "" {
-			name, _ = value["email"].(string)
-		}
+		name, _ := value[keyField].(string)
 		result[name] = value
 	}
 	return result
 }
 
+func canonicalDiffValue(value any) any {
+	if value == nil {
+		return nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprint(value)
+	}
+	var result any
+	if err := json.Unmarshal(data, &result); err != nil {
+		return fmt.Sprint(value)
+	}
+	return result
+}
+
+func jsonPointerSegment(value string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(value, "~", "~0"), "/", "~1")
+}
+
+func diffStructuredFields(before, after any, path string) []policyFieldChange {
+	result := []policyFieldChange{}
+	var walk func(any, any, string)
+	walk = func(oldValue, newValue any, currentPath string) {
+		if reflect.DeepEqual(oldValue, newValue) {
+			return
+		}
+		oldMap, oldIsMap := oldValue.(map[string]any)
+		newMap, newIsMap := newValue.(map[string]any)
+		if oldIsMap && newIsMap {
+			keys := make([]string, 0, len(oldMap)+len(newMap))
+			seen := map[string]bool{}
+			for key := range oldMap {
+				seen[key] = true
+				keys = append(keys, key)
+			}
+			for key := range newMap {
+				if !seen[key] {
+					keys = append(keys, key)
+				}
+			}
+			slices.Sort(keys)
+			for _, key := range keys {
+				walk(oldMap[key], newMap[key], currentPath+"/"+jsonPointerSegment(key))
+			}
+			return
+		}
+		oldList, oldIsList := oldValue.([]any)
+		newList, newIsList := newValue.([]any)
+		if oldIsList && newIsList {
+			length := max(len(oldList), len(newList))
+			for i := 0; i < length; i++ {
+				var oldItem, newItem any
+				if i < len(oldList) {
+					oldItem = oldList[i]
+				}
+				if i < len(newList) {
+					newItem = newList[i]
+				}
+				walk(oldItem, newItem, fmt.Sprintf("%s/%d", currentPath, i))
+			}
+			return
+		}
+		result = append(result, policyFieldChange{Path: currentPath, Before: oldValue, After: newValue})
+	}
+	walk(before, after, path)
+	return result
+}
+
 func (s *state) policyInitialized() bool {
-	_, err := os.Stat(filepath.Join(s.config.NetspocData, "current", "email"))
-	return err == nil
+	// A legacy compiled Netspoc policy also contains current/email, but has no
+	// editable authorization publication. Treating that file as the admin
+	// initialization marker would lock every existing installation out of the
+	// token-protected migration/bootstrap flow after an upgrade.
+	version, err := s.latestPublicationVersion()
+	return err == nil && version != ""
 }
 
 func (s *state) draftPath() string { return filepath.Join(s.config.NetspocData, "draft.json") }
@@ -715,17 +1024,90 @@ func newPolicyVersion() string {
 }
 
 func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
-	normalizeEditablePolicy(p)
-	if err := derivePolicyNames(p); err != nil { return err }
-	for _, u := range p.Users {
-		if u.Password != "" {
-			if err := SetUserPassword(s.config.UserDir, u.Email, u.Password); err != nil {
-				return err
-			}
-		} else if _, err := os.Stat(filepath.Join(s.config.UserDir, u.Email)); err != nil {
-			return fmt.Errorf("password is required for new user %s", u.Email)
+	return s.publishPolicyVersionBy(p, version, "")
+}
+
+type currentPolicyLinkSnapshot struct {
+	Exists bool
+	Target string
+}
+
+func snapshotCurrentPolicyLink(path string) (currentPolicyLinkSnapshot, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return currentPolicyLinkSnapshot{}, nil
+	}
+	if err != nil {
+		return currentPolicyLinkSnapshot{}, err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return currentPolicyLinkSnapshot{}, fmt.Errorf("current policy pointer %q is not a symbolic link", path)
+	}
+	target, err := os.Readlink(path)
+	if err != nil {
+		return currentPolicyLinkSnapshot{}, err
+	}
+	return currentPolicyLinkSnapshot{Exists: true, Target: target}, nil
+}
+
+func restoreCurrentPolicyLink(path, temporary string, snapshot currentPolicyLinkSnapshot) error {
+	if err := os.Remove(temporary); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if snapshot.Exists {
+		if err := os.Symlink(snapshot.Target, temporary); err != nil {
+			return err
 		}
 	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_ = os.Remove(temporary)
+		return err
+	}
+	if snapshot.Exists {
+		if err := os.Rename(temporary, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func publicationRollbackError(cause, linkErr, draftErr error) error {
+	rollbackErrors := []error{}
+	if linkErr != nil {
+		rollbackErrors = append(rollbackErrors, fmt.Errorf("restore current policy pointer: %w", linkErr))
+	}
+	if draftErr != nil {
+		rollbackErrors = append(rollbackErrors, fmt.Errorf("restore policy draft: %w", draftErr))
+	}
+	if len(rollbackErrors) == 0 {
+		return cause
+	}
+	return errors.Join(append([]error{cause}, rollbackErrors...)...)
+}
+
+func canonicalJSONValue(value any) (any, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var canonical any
+	if err := json.Unmarshal(data, &canonical); err != nil {
+		return nil, err
+	}
+	return canonical, nil
+}
+
+func (s *state) publishPolicyVersionBy(p *editablePolicy, version, actor string) error {
+	normalizeEditablePolicy(p)
+	if err := derivePolicyNames(p); err != nil {
+		return err
+	}
+	publicationLock, err := s.acquirePublicationLock(version)
+	if err != nil {
+		return err
+	}
+	defer s.releaseDeploymentLock(publicationLock)
+	inactiveLDAPAccounts := inactiveLDAPAccountEmails(p)
 	dir := filepath.Join(s.config.NetspocData, version)
 	if err := os.MkdirAll(filepath.Join(dir, "owner"), 0750); err != nil {
 		return err
@@ -749,7 +1131,8 @@ func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
 		// Membership in an ancestor grants read access to every descendant.
 		for ancestor := child.Name; ancestor != ""; ancestor = ownerByName[ancestor].Parent {
 			o := ownerByName[ancestor]
-			for _, email := range append(slices.Clone(o.Admins), o.Users...) {
+			assigned := append(slices.Clone(o.Admins), o.Users...)
+			for _, email := range withoutInactiveLDAPAccounts(assigned, inactiveLDAPAccounts) {
 				emails[strings.ToLower(email)] = append(emails[strings.ToLower(email)], child.Name)
 			}
 		}
@@ -768,7 +1151,9 @@ func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
 			hostOwner := h.Owner
 			name := "host:" + h.Name
 			zone := h.Zone
-			if zone == "" { zone = n.Zone }
+			if zone == "" {
+				zone = n.Zone
+			}
 			objects[name] = map[string]any{"ip": h.IP, "zone": zone, "owner": hostOwner}
 			objectOwners[name] = hostOwner
 			networkChildren[key] = append(networkChildren[key], name)
@@ -882,7 +1267,7 @@ func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
 		files := map[string]any{
 			"assets": map[string]any{"anys": map[string]any{"all": map[string]any{"networks": map[string]any{}, "fqdns": effectiveFQDNs}}}, "nat_set": []string{},
 			"users": effectiveUsers, "service_lists": map[string]any{"Owner": effectiveServices, "User": effectiveUserServices, "Visible": []string{}},
-			"emails": emailEntries(o.Admins), "watchers": emailEntries(o.Watchers), "extended_by": extendedBy,
+			"emails": emailEntries(withoutInactiveLDAPAccounts(o.Admins, inactiveLDAPAccounts)), "watchers": emailEntries(withoutInactiveLDAPAccounts(o.Watchers, inactiveLDAPAccounts)), "extended_by": extendedBy,
 		}
 		nets := files["assets"].(map[string]any)["anys"].(map[string]any)["all"].(map[string]any)["networks"].(map[string]any)
 		for _, name := range effectiveNetworks {
@@ -900,23 +1285,37 @@ func (s *state) publishPolicyVersion(p *editablePolicy, version string) error {
 			}
 		}
 	}
-	if err := s.saveDraft(p); err != nil {
+	tmp := filepath.Join(s.config.NetspocData, ".current-"+version)
+	current := filepath.Join(s.config.NetspocData, "current")
+	currentSnapshot, err := snapshotCurrentPolicyLink(current)
+	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(s.config.NetspocData, ".current-"+version)
-	_ = os.Remove(tmp)
+	draftSnapshot, err := s.snapshotStoredPolicyDraft()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	if err := os.Symlink(version, tmp); err != nil {
 		return err
 	}
-	current := filepath.Join(s.config.NetspocData, "current")
-	_ = os.Remove(current)
+	defer os.Remove(tmp)
+	if err := s.saveDraft(p); err != nil {
+		return err
+	}
+	if err := os.Remove(current); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return publicationRollbackError(err, nil, s.restoreStoredPolicyDraft(draftSnapshot))
+	}
 	if err := os.Rename(tmp, current); err != nil {
-		return err
+		linkErr := restoreCurrentPolicyLink(current, tmp+".restore", currentSnapshot)
+		return publicationRollbackError(err, linkErr, s.restoreStoredPolicyDraft(draftSnapshot))
 	}
-	if err := s.storePublication(version, p); err != nil {
-		return err
+	if err := s.finalizePublication(version, p, actor, actor != ""); err != nil {
+		linkErr := restoreCurrentPolicyLink(current, tmp+".restore", currentSnapshot)
+		return publicationRollbackError(err, linkErr, s.restoreStoredPolicyDraft(draftSnapshot))
 	}
-	s.cache = newCache(s.config.NetspocData, 8)
 	return nil
 }
 
@@ -924,6 +1323,29 @@ func emailEntries(values []string) []map[string]string {
 	result := make([]map[string]string, 0, len(values))
 	for _, value := range values {
 		result = append(result, map[string]string{"Email": value})
+	}
+	return result
+}
+
+func inactiveLDAPAccountEmails(p *editablePolicy) map[string]bool {
+	result := map[string]bool{}
+	if p == nil {
+		return result
+	}
+	for _, user := range p.Users {
+		if strings.EqualFold(strings.TrimSpace(user.Source), "ldap") && !user.Active {
+			result[strings.ToLower(strings.TrimSpace(user.Email))] = true
+		}
+	}
+	return result
+}
+
+func withoutInactiveLDAPAccounts(values []string, inactive map[string]bool) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if !inactive[strings.ToLower(strings.TrimSpace(value))] {
+			result = append(result, value)
+		}
 	}
 	return result
 }

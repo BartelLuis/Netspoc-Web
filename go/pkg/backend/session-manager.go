@@ -5,11 +5,14 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -33,10 +36,22 @@ type SessionManager struct {
 	idleExpiration     time.Duration
 	absoluteExpiration time.Duration
 	cookieName         string
+	requestMu          sync.Mutex
+	requestLocks       map[string]*sessionRequestLock
+}
+
+type sessionRequestLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 func (m *SessionManager) Handle(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serialize the full read/handler/write lifecycle for requests that carry
+		// the same session ID. This prevents ordinary session data updates (for
+		// example one-time verification tokens) from losing each other.
+		release := m.lockRequestSession(r)
+		defer release()
 		// Start the session
 		session, rws := m.start(r)
 
@@ -55,11 +70,43 @@ func (m *SessionManager) Handle(next http.Handler) http.Handler {
 		next.ServeHTTP(sw, rws)
 
 		// Save the session
-		m.save(session)
+		if err := m.save(session); err != nil && !errors.Is(err, errSessionRevoked) {
+			log.Printf("Failed to save session: %v", err)
+		}
 
 		// Write the session cookie to the response if not already written
 		writeCookieIfNecessary(sw)
 	})
+}
+
+func (m *SessionManager) lockRequestSession(r *http.Request) func() {
+	cookie, err := r.Cookie(m.cookieName)
+	if err != nil || !validSessionID(cookie.Value) {
+		return func() {}
+	}
+	id := cookie.Value
+	m.requestMu.Lock()
+	if m.requestLocks == nil {
+		m.requestLocks = make(map[string]*sessionRequestLock)
+	}
+	entry := m.requestLocks[id]
+	if entry == nil {
+		entry = &sessionRequestLock{}
+		m.requestLocks[id] = entry
+	}
+	entry.refs++
+	m.requestMu.Unlock()
+
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		m.requestMu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(m.requestLocks, id)
+		}
+		m.requestMu.Unlock()
+	}
 }
 
 type sessionResponseWriter struct {
@@ -99,7 +146,7 @@ func writeCookieIfNecessary(w *sessionResponseWriter) {
 		//Domain:   "localhost",
 		HttpOnly: true,
 		Path:     "/",
-		Secure:   false,
+		Secure:   secureSessionCookie(w.request),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(w.sessionManager.idleExpiration),
 		MaxAge:   int(w.sessionManager.idleExpiration / time.Second),
@@ -108,6 +155,32 @@ func writeCookieIfNecessary(w *sessionResponseWriter) {
 	http.SetCookie(w.ResponseWriter, cookie)
 
 	w.done = true
+}
+
+// secureSessionCookie supports TLS termination without trusting forwarded
+// headers from arbitrary clients. POLICYWEB_COOKIE_SECURE is an explicit
+// override. X-Forwarded-Proto is only considered when
+// POLICYWEB_TRUST_PROXY_HEADERS is enabled.
+func secureSessionCookie(r *http.Request) bool {
+	if configured := strings.TrimSpace(os.Getenv("POLICYWEB_COOKIE_SECURE")); configured != "" {
+		secure, err := strconv.ParseBool(configured)
+		if err == nil {
+			return secure
+		}
+	}
+	if r.TLS != nil {
+		return true
+	}
+	if !trustProxyHeaders() {
+		return false
+	}
+	proto := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0])
+	return strings.EqualFold(proto, "https")
+}
+
+func trustProxyHeaders() bool {
+	trusted, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("POLICYWEB_TRUST_PROXY_HEADERS")))
+	return trusted
 }
 
 func GetGoSession(r *http.Request) *GoSession {
@@ -137,6 +210,25 @@ func newSession() *GoSession {
 		CreatedAt:      time.Now(),
 		LastActivityAt: time.Now(),
 	}
+}
+
+func validSessionID(id string) bool {
+	decoded, err := base64.RawURLEncoding.DecodeString(id)
+	return err == nil && len(decoded) == 32
+}
+
+// rotate invalidates the previous server-side session and replaces it in
+// place, so the request context and response writer immediately use the new
+// identifier. Session data is deliberately cleared at authentication
+// boundaries to prevent fixation and data from a previous identity leaking.
+func (m *SessionManager) rotate(session *GoSession) {
+	oldID := session.ID
+	if oldID != "" {
+		if err := m.store.destroy(oldID); err != nil {
+			panic(err)
+		}
+	}
+	*session = *newSession()
 }
 
 func (s *GoSession) Get(key string) any {
@@ -203,7 +295,7 @@ func (m *SessionManager) start(r *http.Request) (*GoSession, *http.Request) {
 
 	// Read From Cookie
 	cookie, err := r.Cookie(m.cookieName)
-	if err == nil {
+	if err == nil && validSessionID(cookie.Value) {
 		session, err = m.store.read(cookie.Value)
 		if err != nil {
 			log.Printf("Failed to read session from store: %v", err)
@@ -243,6 +335,10 @@ type FileSystemSessionStore struct {
 	dir string
 }
 
+var errSessionRevoked = errors.New("session has been revoked")
+
+const sessionRevocationPrefix = ".revoked-"
+
 func NewFileSystemSessionStore(dir string) *FileSystemSessionStore {
 	return &FileSystemSessionStore{
 		dir: dir,
@@ -252,6 +348,13 @@ func NewFileSystemSessionStore(dir string) *FileSystemSessionStore {
 func (s *FileSystemSessionStore) read(id string) (*GoSession, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	revoked, err := s.isRevoked(id)
+	if err != nil {
+		return nil, err
+	}
+	if revoked {
+		return nil, nil
+	}
 
 	filePath := s.filePath(id)
 	data, err := os.ReadFile(filePath)
@@ -274,21 +377,55 @@ func (s *FileSystemSessionStore) read(id string) (*GoSession, error) {
 func (s *FileSystemSessionStore) write(session *GoSession) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	revoked, err := s.isRevoked(session.ID)
+	if err != nil {
+		return err
+	}
+	if revoked {
+		return errSessionRevoked
+	}
 
 	filePath := s.filePath(session.ID)
 	data, err := json.Marshal(session)
 	if err != nil {
 		return err
 	}
-	err = os.MkdirAll(filepath.Dir(filePath), 0700)
+	dir := filepath.Dir(filePath)
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".session.tmp-*")
 	if err != nil {
 		return err
 	}
-	err = os.WriteFile(filePath, data, 0644)
-	if err != nil {
+	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
 		return err
 	}
-	return nil
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := replaceFile(tmpName, filePath); err != nil {
+		return err
+	}
+	committed = true
+	// Correct permissions of session files created by older releases too.
+	return os.Chmod(filePath, 0600)
 }
 
 func (s *FileSystemSessionStore) destroy(id string) error {
@@ -296,7 +433,48 @@ func (s *FileSystemSessionStore) destroy(id string) error {
 	defer s.mu.Unlock()
 
 	filePath := s.filePath(id)
-	err := os.Remove(filePath)
+	if revoked, err := s.isRevoked(id); err != nil {
+		return err
+	} else if revoked {
+		// A marker always wins over any stale data file recreated by an older
+		// process during a rolling upgrade.
+		err = os.Remove(filePath)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		if os.IsNotExist(err) {
+			// Fresh request-local IDs are rotated before their first save during
+			// login. No other request can hold such a session, so avoid creating
+			// an unnecessary, attacker-amplifiable tombstone.
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(s.dir, 0700); err != nil {
+		return err
+	}
+	// Publish and sync the marker before deleting the session. Another process
+	// that loaded the old file can no longer recreate it after this point.
+	revokedPath := s.revokedPath(id)
+	marker, err := os.OpenFile(revokedPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err == nil {
+		if syncErr := marker.Sync(); syncErr != nil {
+			_ = marker.Close()
+			return syncErr
+		}
+		if closeErr := marker.Close(); closeErr != nil {
+			return closeErr
+		}
+	} else if !os.IsExist(err) {
+		return err
+	}
+	if err := os.Chmod(revokedPath, 0600); err != nil {
+		return err
+	}
+	err = os.Remove(filePath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -315,6 +493,13 @@ func (s *FileSystemSessionStore) gc(idleExpiration, absoluteExpiration time.Dura
 
 	for _, file := range files {
 		filePath := s.dir + "/" + file.Name()
+		if strings.HasPrefix(file.Name(), sessionRevocationPrefix) {
+			info, infoErr := file.Info()
+			if infoErr == nil && time.Since(info.ModTime()) > absoluteExpiration {
+				_ = os.Remove(filePath)
+			}
+			continue
+		}
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			continue
@@ -337,4 +522,19 @@ func (s *FileSystemSessionStore) gc(idleExpiration, absoluteExpiration time.Dura
 
 func (s *FileSystemSessionStore) filePath(id string) string {
 	return s.dir + "/" + id
+}
+
+func (s *FileSystemSessionStore) revokedPath(id string) string {
+	return filepath.Join(s.dir, sessionRevocationPrefix+id)
+}
+
+func (s *FileSystemSessionStore) isRevoked(id string) (bool, error) {
+	_, err := os.Stat(s.revokedPath(id))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }

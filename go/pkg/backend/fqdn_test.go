@@ -13,7 +13,7 @@ import (
 
 func policyWithFQDN() *editablePolicy {
 	p := validEditablePolicy()
-	p.FQDNs = []editableFQDN{{Name: "customer-api", FQDN: " API.Example.COM. ", Owner: "network-team"}}
+	p.FQDNs = []editableFQDN{{Name: "customer-api", FQDN: " API.Example.COM. ", Owner: "network-team", Zone: "IDMZ"}}
 	p.Services[0].Rules[0].Destinations = []string{"fqdn:customer-api"}
 	return p
 }
@@ -38,10 +38,10 @@ func TestRejectInvalidEditableFQDN(t *testing.T) {
 		{name: "wildcard", mutate: func(p *editablePolicy) { p.FQDNs[0].FQDN = "*.example.com" }, want: "invalid FQDN"},
 		{name: "unknown owner", mutate: func(p *editablePolicy) { p.FQDNs[0].Owner = "missing" }, want: "unknown owner"},
 		{name: "duplicate name", mutate: func(p *editablePolicy) {
-			p.FQDNs = append(p.FQDNs, editableFQDN{Name: "customer-api", FQDN: "other.example.com", Owner: "network-team"})
+			p.FQDNs = append(p.FQDNs, editableFQDN{Name: "customer-api", FQDN: "other.example.com", Owner: "network-team", Zone: "IDMZ"})
 		}, want: "duplicate FQDN object"},
 		{name: "duplicate value", mutate: func(p *editablePolicy) {
-			p.FQDNs = append(p.FQDNs, editableFQDN{Name: "other", FQDN: "api.example.com", Owner: "network-team"})
+			p.FQDNs = append(p.FQDNs, editableFQDN{Name: "other", FQDN: "api.example.com", Owner: "network-team", Zone: "IDMZ"})
 		}, want: "duplicate FQDN"},
 		{name: "source reference", mutate: func(p *editablePolicy) {
 			p.Services[0].Rules[0].Sources = []string{"fqdn:customer-api"}
@@ -63,8 +63,8 @@ func TestFQDNIsIncludedInEditableDiff(t *testing.T) {
 	old := validEditablePolicy()
 	next := policyWithFQDN()
 	changes := diffPolicies(old, next)
-	if !slices.ContainsFunc(changes, func(change map[string]string) bool {
-		return change["type"] == "fqdn" && change["name"] == "customer-api" && change["change"] == "added"
+	if !slices.ContainsFunc(changes, func(change policyChange) bool {
+		return change.Type == "fqdn" && change.Name == "customer-api" && change.Change == "added"
 	}) {
 		t.Fatalf("FQDN change missing from diff: %#v", changes)
 	}
@@ -73,12 +73,12 @@ func TestFQDNIsIncludedInEditableDiff(t *testing.T) {
 func TestPublishFQDNForOwnerAndRuleView(t *testing.T) {
 	root := t.TempDir()
 	p := policyWithFQDN()
-	p.Users = append(p.Users, editableUser{Email: "child@example.net", Password: "secret", Role: "viewer"})
-	p.Users = append(p.Users, editableUser{Email: "foreign@example.net", Password: "secret", Role: "viewer"})
+	p.Users = append(p.Users, editableUser{Email: "child@example.net", Role: "viewer"})
+	p.Users = append(p.Users, editableUser{Email: "foreign@example.net", Role: "viewer"})
 	p.Owners = append(p.Owners, editableOwner{Name: "child", Parent: "network-team", Users: []string{"child@example.net"}})
 	p.Owners = append(p.Owners, editableOwner{Name: "foreign", Users: []string{"foreign@example.net"}})
 	p.FQDNs[0].Owner = "child"
-	p.FQDNs = append(p.FQDNs, editableFQDN{Name: "foreign-api", FQDN: "foreign.example.com", Owner: "foreign"})
+	p.FQDNs = append(p.FQDNs, editableFQDN{Name: "foreign-api", FQDN: "foreign.example.com", Owner: "foreign", Zone: "IDMZ"})
 	p.Services[0].Owners = []string{"child"}
 	if err := validateEditablePolicy(p); err != nil {
 		t.Fatal(err)

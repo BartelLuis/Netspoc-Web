@@ -6,11 +6,11 @@ import (
 )
 
 func (s *state) getRules(w http.ResponseWriter, r *http.Request) {
-	history := s.getHistoryParamOrCurrentPolicy(r)
 	owner := r.FormValue("active_owner")
 	if !s.requireOwnerAccess(w, r, owner) {
 		return
 	}
+	history := s.getHistoryParamOrCurrentPolicy(r)
 	service := r.FormValue("service")
 	serviceLists := s.loadServiceLists(history, owner)
 	if !serviceLists.accessible[service] {
@@ -20,8 +20,8 @@ func (s *state) getRules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *state) expandRules(r *http.Request, service string) []jsonMap {
-	rules, users := s.getMatchingRulesAndUsers(r, service)
-	return s.adaptNameIPUser(r, rules, users)
+	rules, _ := s.getMatchingRulesAndUsers(r, service)
+	return s.adaptNameIP(r, rules)
 }
 
 func (s *state) getMatchingRulesAndUsers(r *http.Request, service string) ([]*rule, []string) {
@@ -161,14 +161,10 @@ RULE:
 	return result
 }
 
-/*
-Substitute objects in rules by ip or name.
-Substitute 'users' keyword by ip or name of users.
-*/
-func (s *state) adaptNameIPUser(r *http.Request, rules []*rule, userNames []string) []jsonMap {
+// Substitute objects in rules by IP address or name.
+func (s *state) adaptNameIP(r *http.Request, rules []*rule) []jsonMap {
 	result := []jsonMap{}
 	history := s.getHistoryParamOrCurrentPolicy(r)
-	expandUsers := r.FormValue("expand_users")
 	owner := r.FormValue("active_owner")
 	dispProp := r.FormValue("display_property")
 	if dispProp == "" {
@@ -209,20 +205,10 @@ func (s *state) adaptNameIPUser(r *http.Request, rules []*rule, userNames []stri
 		}
 	}
 	for _, rule := range rules {
-		src := rule.Src
-		dst := rule.Dst
-		if expandUsers == "1" {
-			if hasUser(rule, "src") {
-				src = userNames
-			}
-			if hasUser(rule, "dst") {
-				dst = userNames
-			}
-		}
 		copy := jsonMap{
 			"action": rule.Action,
-			"src":    getVal(src),
-			"dst":    getVal(dst),
+			"src":    getVal(rule.Src),
+			"dst":    getVal(rule.Dst),
 			"prt":    rule.Prt,
 		}
 		copy["has_user"] = rule.HasUser
@@ -240,8 +226,7 @@ func (s *state) name2IP(version string, objName string, natSet map[string]bool) 
 	objNat := obj.NAT
 	for tag := range objNat {
 		if natSet[tag] {
-			obj.IP = objNat[tag]
-			return obj.IP
+			return objNat[tag]
 		}
 	}
 	if obj.IP == "" {
@@ -260,15 +245,4 @@ func (s *state) name2IP6(version string, objName string) string {
 		return obj.IP6
 	}
 	return ""
-}
-
-func hasUser(rule *rule, what string) bool {
-	result := false
-	switch what {
-	case "src":
-		result = rule.HasUser == "src" || rule.HasUser == "both"
-	case "dst":
-		result = rule.HasUser == "dst" || rule.HasUser == "both"
-	}
-	return result
 }

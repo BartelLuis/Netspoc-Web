@@ -65,17 +65,17 @@ service:s5 = {
 
 ############################################################
 
-=TITLE=Display prop "ip", expand user, remove duplicates
+=TITLE=Display prop "ip" leaves user side empty
 
 =NETSPOC=
 [[topo]]
 =URL=get_rules
-=PARAMS=service=s5&active_owner=o1&history=p1&display_property=ip&expand_users=1
+=PARAMS=service=s5&active_owner=o1&history=p1&display_property=ip
 =RESPONSE=
 [
     {
         "action"   : "permit",
-        "src"      : ["10.1.0.0/16"],
+        "src"      : [],
         "dst"      : ["10.4.0.0/16"],
         "has_user" : "src",
         "prt"      : ["tcp 80"]
@@ -166,26 +166,17 @@ service:s5 = {
 
 ############################################################
 
-=TITLE=Display prop "ip_and_name" with "expand_users"
+=TITLE=Display prop "ip_and_name" leaves user side empty
 
 =NETSPOC=
 [[topo]]
 =URL=get_rules
-=PARAMS=service=s5&active_owner=o1&history=p1&display_property=ip_and_name&expand_users=1
+=PARAMS=service=s5&active_owner=o1&history=p1&display_property=ip_and_name
 =RESPONSE=
 [
     {
       "action" : "permit",
-      "src" : [
-          {
-              "ip"   : "10.1.0.0/16",
-              "name" : "any:[ip=10.1.0.0/16 & network:n1]"
-          },
-          {
-              "ip"   : "10.1.0.0/16",
-              "name" : "any:[ip=10.1.0.0/16 & network:n2]"
-          }
-      ],
+      "src" : [],
       "prt" : [
           "tcp 80"
       ],

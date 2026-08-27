@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="de">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="referrer" content="no-referrer">
+	<title>Verifikation</title>
+	<script src="/resources/js/theme.js"></script>
+	<style>body { font-family: sans-serif; }</style>
+	<link rel="stylesheet" href="/resources/css/theme-static.css">
+</head>
+<body>
+	<main class="pw-standalone">
+		<div class="pw-page-heading">
+			<h2>Kennwortänderung bestätigen</h2>
+			<button class="pw-theme-toggle" data-policyweb-theme-toggle type="button">Dark Mode</button>
+		</div>
+		<p>Soll das neue Kennwort für {{.Email}} jetzt aktiviert werden?</p>
+		<form method="post">
+			<input type="hidden" name="email" value="{{.Email}}">
+			<input type="hidden" name="token" value="{{.Token}}">
+			<button type="submit">Kennwortänderung bestätigen</button>
+		</form>
+	</main>
+</body>
+</html>

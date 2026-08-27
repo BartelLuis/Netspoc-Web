@@ -3,20 +3,70 @@ package backend
 // login.go - Handles user login
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
+	"strings"
 )
 
+func (s *state) maintenanceStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	active, settings := s.effectiveMaintenance()
+	message := strings.TrimSpace(settings.Message)
+	if active && message == "" {
+		message = "Das System befindet sich derzeit im Wartungsmodus. Die Anmeldung ist nur für Administratoren möglich."
+	}
+	writeJSON(w, map[string]any{"success": true, "maintenance_mode": active, "message": message})
+}
+
+func (s *state) effectiveMaintenance() (bool, maintenanceSettings) {
+	active, settings, _ := s.effectiveMaintenanceWithError()
+	return active, settings
+}
+
+func (s *state) effectiveMaintenanceWithError() (bool, maintenanceSettings, error) {
+	if s.config == nil {
+		return true, failClosedMaintenanceSettings(), errors.New("maintenance configuration is unavailable")
+	}
+	return s.maintenanceActive()
+}
+
+func maintenanceLoginAllowed(p *editablePolicy, email string) bool {
+	return policyRole(p, strings.ToLower(strings.TrimSpace(email))) == "admin"
+}
+
+func maintenanceRequestAllowed(enabled bool, p *editablePolicy, email string) bool {
+	return !enabled || maintenanceLoginAllowed(p, email)
+}
+
 func (s *state) setLogin(session *GoSession, email string) {
+	s.rotateSession(session)
 	session.Put("email", email)
 	session.Put("loggedIn", true)
 }
 
 func (s *state) logout(session *GoSession) {
+	s.rotateSession(session)
 	session.Put("loggedIn", false)
 }
 
+func (s *state) rotateSession(session *GoSession) {
+	if s.sessionManager != nil {
+		s.sessionManager.rotate(session)
+		return
+	}
+	// Keep isolated handler tests usable even when they construct state without
+	// a session manager.
+	*session = *newSession()
+}
+
 func (s *state) logoutHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	session := GetGoSession(r)
 	s.logout(session)
 	// The ExtJS client performs the navigation after this request completes.
@@ -26,40 +76,91 @@ func (s *state) logoutHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *state) loginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
 	session := GetGoSession(r)
 	if session == nil {
 		writeError(w, "Session not found", http.StatusInternalServerError)
 		return
 	}
+	// A login attempt always starts from an anonymous, rotated session. A
+	// failed re-authentication must not leave an earlier login active.
+	s.logout(session)
 	email := r.FormValue("email")
-	if email == "" {
-		writeError(w, "Email is required", http.StatusBadRequest)
-		return
-	}
+	email = strings.ToLower(strings.TrimSpace(email))
 	if email != "guest" {
+		if err := s.checkAttack(r); err != nil {
+			writeError(w, "Too many login attempts", http.StatusTooManyRequests)
+			return
+		}
+		canonical, canonicalErr := canonicalAccountEmail(email)
+		if canonicalErr != nil {
+			s.setAttack(r)
+			writeHTMLError(w, "Login failed")
+			return
+		}
+		email = canonical
+		if !s.localPasswordIdentityAllowed(email) {
+			s.setAttack(r)
+			writeHTMLError(w, "Login failed")
+			return
+		}
 		pass := r.FormValue("pass")
 		if pass == "" {
-			writeError(w, "Password is required", http.StatusBadRequest)
+			s.setAttack(r)
+			writeHTMLError(w, "Login failed")
 			return
 		}
-		userFile := fmt.Sprintf("%s/%s", s.config.UserDir, email)
+		userFile, err := safeUserFile(s.config.UserDir, email)
+		if err != nil {
+			s.setAttack(r)
+			writeHTMLError(w, "Login failed")
+			return
+		}
 		ustore, err := GetUserStore(userFile)
 		if err != nil {
-			writeError(w, "Failed to get user store: "+err.Error(), http.StatusInternalServerError)
+			s.setAttack(r)
+			writeHTMLError(w, "Login failed")
 			return
 		}
-		if ustore == nil {
-			writeError(w, "Empty user store for: "+email, http.StatusUnauthorized)
+		valid, err := ustore.CheckPasswordAndMigrate(pass, userFile)
+		if err != nil {
+			s.setAttack(r)
+			writeHTMLError(w, "Login failed")
 			return
 		}
-		if !ustore.CheckPassword(pass) {
+		if !valid {
 			s.setAttack(r)
 			//writeError(w, "Login failed", http.StatusUnauthorized)
 			writeHTMLError(w, "Login failed")
 			return
 		}
+		if err := s.checkEmailAuthorization(email); err != nil {
+			s.setAttack(r)
+			writeHTMLError(w, "Login failed")
+			return
+		}
+		// Re-evaluate the immutable authorization snapshot after the expensive
+		// password check so a concurrent publication cannot switch this identity
+		// to LDAP during a local login.
+		if !s.localPasswordIdentityAllowed(email) {
+			s.setAttack(r)
+			writeHTMLError(w, "Login failed")
+			return
+		}
 		s.clearAttack(r)
+	}
+	maintenanceActive, _ := s.effectiveMaintenance()
+	if maintenanceActive {
+		p := s.authorizationPolicy()
+		if !maintenanceLoginAllowed(p, email) {
+			s.logout(session)
+			writeHTMLError(w, "Das System befindet sich im Wartungsmodus. Die Anmeldung ist nur für Administratoren möglich.")
+			return
+		}
 	}
 	s.setLogin(session, email)
 

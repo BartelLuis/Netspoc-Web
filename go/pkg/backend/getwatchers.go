@@ -5,11 +5,11 @@ import (
 )
 
 func (s *state) getWatchers(w http.ResponseWriter, r *http.Request) {
-	history := s.getHistoryParamOrCurrentPolicy(r)
 	owner := r.FormValue("active_owner")
 	if !s.requireOwnerAccess(w, r, owner) {
 		return
 	}
+	history := s.getHistoryParamOrCurrentPolicy(r)
 	emails := s.loadWatchers(history, owner)
 	records := make([]jsonMap, 0)
 	for _, e := range emails {
@@ -21,11 +21,11 @@ func (s *state) getWatchers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *state) getSupervisors(w http.ResponseWriter, r *http.Request) {
-	history := s.getHistoryParamOrCurrentPolicy(r)
 	owner := r.FormValue("active_owner")
 	if !s.requireOwnerAccess(w, r, owner) {
 		return
 	}
+	history := s.getHistoryParamOrCurrentPolicy(r)
 	emails := s.loadExtendedBy(history, owner)
 	records := make([]jsonMap, 0)
 	for _, e := range emails {

@@ -35,6 +35,10 @@ func (s *state) getOwner(w http.ResponseWriter, r *http.Request) {
 		writeRecords(w, []jsonMap{})
 		return
 	}
+	if err := s.bindRequestedPolicyVersionForAnyOwner(r, authorizedOwners); err != nil {
+		writeError(w, "Policy revision is unavailable", http.StatusForbidden)
+		return
+	}
 	// Selected owner was stored before.
 	if ow != "" && slices.Contains(authorizedOwners, ow) {
 		writeRecords(w, []jsonMap{{"name": ow}})
@@ -140,6 +144,10 @@ func (s *state) requireOwnerAccess(w http.ResponseWriter, r *http.Request, owner
 	}
 	if !s.canAccessOwner(r, owner) {
 		writeError(w, "Not authorized to access owner '"+owner+"'", http.StatusForbidden)
+		return false
+	}
+	if err := s.bindRequestedPolicyVersion(r, owner); err != nil {
+		writeError(w, "Policy revision is unavailable", http.StatusForbidden)
 		return false
 	}
 	return true

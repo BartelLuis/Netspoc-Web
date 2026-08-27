@@ -246,7 +246,7 @@ test('ExtJS application loads the theme runtime and its dedicated overlay', asyn
 
 test('standalone backend templates load the shared theme assets', async (t) => {
   const templateDirectory = join(repositoryRoot, 'go', 'pkg', 'backend', 'html-templates');
-  const templates = ['error', 'show_passwd', 'verify_fail', 'verify_ok'];
+  const templates = ['error', 'show_passwd', 'verify_confirm', 'verify_fail', 'verify_ok'];
 
   for (const template of templates) {
     await t.test(template, async () => {

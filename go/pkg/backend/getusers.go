@@ -6,11 +6,11 @@ import (
 )
 
 func (s *state) getUsers(w http.ResponseWriter, r *http.Request) {
-	history := s.getHistoryParamOrCurrentPolicy(r)
 	owner := r.FormValue("active_owner")
 	if !s.requireOwnerAccess(w, r, owner) {
 		return
 	}
+	history := s.getHistoryParamOrCurrentPolicy(r)
 	service := r.FormValue("service")
 	if !s.loadServiceLists(history, owner).accessible[service] {
 		writeError(w, "Service is unavailable", http.StatusForbidden)
@@ -51,21 +51,18 @@ func (s *state) getCombinedObjList(objNames []string, owner string, history stri
 
 func (s *state) getNatObj(objName string, natSet map[string]bool, history string) *object {
 	objects := s.loadObjects(history)
-	obj := getObject(objects, objName)
-	nat := obj.NAT
-	for _, tag := range nat {
+	cached := getObject(objects, objName)
+	obj := *cached
+	for tag, natIP := range cached.NAT {
 		if natSet[tag] {
-			natIP := nat[tag]
 			obj.IP = natIP
 			break
 		}
 	}
 	if obj.IP != "" && obj.IP6 != "" {
-		obj2 := *obj
-		obj2.IP6 = ""
-		return &obj2
+		obj.IP6 = ""
 	}
-	return obj
+	return &obj
 }
 
 func (s *state) getIP6Obj(objName string, history string) *object {

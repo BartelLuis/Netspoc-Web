@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"reflect"
 	"slices"
 )
@@ -17,6 +18,11 @@ func (s *state) getDiff(w http.ResponseWriter, r *http.Request) {
 	selectedHistory := s.getHistoryParamOrCurrentPolicy(r)
 	if version == "" {
 		writeError(w, "version parameter is required", http.StatusBadRequest)
+		return
+	}
+	version, err := s.resolvePolicyVersion(owner, version)
+	if err != nil {
+		writeError(w, "Policy revision is unavailable", http.StatusForbidden)
 		return
 	}
 	c := s.cache
@@ -151,7 +157,16 @@ func (s *state) getDiffMail(w http.ResponseWriter, r *http.Request) {
 	if !s.requireOwnerAccess(w, r, owner) {
 		return
 	}
-	store, err := GetUserStore(s.getUserFile(r))
+	userFile, err := s.getUserFile(r)
+	if err != nil {
+		writeError(w, "Invalid account", http.StatusBadRequest)
+		return
+	}
+	store, err := GetUserStore(userFile)
+	if os.IsNotExist(err) {
+		writeRecords(w, []map[string]bool{{"send": false}})
+		return
+	}
 	if err != nil {
 		writeError(w, "Failed to get user store: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -174,36 +189,36 @@ func (s *state) setDiffMail(w http.ResponseWriter, r *http.Request) {
 	if !s.requireOwnerAccess(w, r, owner) {
 		return
 	}
-	userFile := s.getUserFile(r)
-	store, err := GetUserStore(userFile)
+	userFile, err := s.getUserFile(r)
 	if err != nil {
-		writeError(w, "Failed to get user store: "+err.Error(), http.StatusInternalServerError)
+		writeError(w, "Invalid account", http.StatusBadRequest)
 		return
 	}
-
-	ln := len(store.SendDiff)
-	if r.FormValue("send") == "true" {
-		if !slices.Contains(store.SendDiff, owner) {
-			store.SendDiff = append(store.SendDiff, owner)
+	err = updateUserStore(userFile, true, func(store *UserStore) (bool, error) {
+		ln := len(store.SendDiff)
+		if r.FormValue("send") == "true" {
+			if !slices.Contains(store.SendDiff, owner) {
+				store.SendDiff = append(store.SendDiff, owner)
+			}
+		} else {
+			store.SendDiff = slices.DeleteFunc(store.SendDiff, func(v string) bool {
+				return v == owner
+			})
 		}
-	} else {
-		store.SendDiff = slices.DeleteFunc(store.SendDiff, func(v string) bool {
-			return v == owner
-		})
-	}
-
-	if len(store.SendDiff) != ln {
-		if err := store.WriteToFile(userFile); err != nil {
-			writeError(w, "Failed to write user store: "+err.Error(),
-				http.StatusInternalServerError)
-			return
-		}
+		return len(store.SendDiff) != ln, nil
+	})
+	if err != nil {
+		writeError(w, "Failed to write user store: "+err.Error(),
+			http.StatusInternalServerError)
+		return
 	}
 	writeRecords(w, []map[string]bool{{"success": true}})
 }
 
-func (s *state) getUserFile(r *http.Request) string {
-	email := GetGoSession(r).Get("email").(string)
-	userDir := s.config.UserDir
-	return userDir + "/" + email
+func (s *state) getUserFile(r *http.Request) (string, error) {
+	email, ok := GetGoSession(r).Get("email").(string)
+	if !ok {
+		return "", fmt.Errorf("invalid account")
+	}
+	return safeUserFile(s.config.UserDir, email)
 }

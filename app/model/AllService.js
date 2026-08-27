@@ -16,7 +16,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-// bold_user is defined in common.js, since it is used in
+// render_rule_side is defined in common.js, since it is used in
 // Rule.js, too (follow DRY principle).
 Ext.define(
     'PolicyWeb.model.AllService',
@@ -28,13 +28,13 @@ Ext.define(
             {
                 name: 'src',
                 mapping: function (node) {
-                    return bold_user(node, 'src');
+                    return render_rule_side(node, 'src');
                 }
             },
             {
                 name: 'dst',
                 mapping: function (node) {
-                    return bold_user(node, 'dst');
+                    return render_rule_side(node, 'dst');
                 }
             },
             {

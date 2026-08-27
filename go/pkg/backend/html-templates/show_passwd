@@ -14,12 +14,11 @@
 <body>
 	<main class="pw-standalone">
 		<div class="pw-page-heading">
-			<h2>Bestätigung erforderlich</h2>
+			<h2>E-Mail versendet</h2>
 			<button class="pw-theme-toggle" data-policyweb-theme-toggle type="button">Dark Mode</button>
 		</div>
-		<p>Das System sendet Ihnen nun eine Bestätigungs-E-Mail. Rufen Sie den darin enthaltenen Link auf, um diese Kennwort-Änderung zu bestätigen.</p>
-		<p>Nach erfolgreicher Bestätigung lautet Ihr neues Kennwort:</p>
-		<input type="text" readonly size="10" value="{{.}}">
+		<p>Das System hat Ihnen eine Bestätigungs-E-Mail gesendet. Rufen Sie den darin enthaltenen Link auf und bestätigen Sie die Kennwortänderung ausdrücklich.</p>
+		<p>Erst nach dieser Bestätigung wird ein neues Kennwort erzeugt und einmalig angezeigt.</p>
 	</main>
 </body>
 </html>

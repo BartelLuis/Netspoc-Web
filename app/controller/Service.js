@@ -31,10 +31,6 @@ var cb_params_key2val = {
         'true': 'name',
         'false': 'ip'
     },
-    'expand_users': {
-        'true': 1,
-        'false': 0
-    },
     'filter_rules': {
         'true': 1,
         'false': 0
@@ -751,11 +747,9 @@ Ext.define(
         var sb = this.getSearchServiceButton();
         sb.toggle(false);
 
-        // Enable checkboxes for user expansion and toggling
-        // of ip and names of objects.
+        // Enable toggling of IPs and object names.
         this.enableAndDisableCheckboxes(
             {
-                'expand_users': 1,
                 'display_property': 1
             },
             {
@@ -877,7 +871,6 @@ Ext.define(
                     'filter_rules': filter
                 },
                 {
-                    'expand_users': 1,
                     'display_property': 1
                 }
             );
@@ -888,7 +881,6 @@ Ext.define(
         else {
             this.enableCheckboxes(
                 {
-                    'expand_users': 1,
                     'display_property': 1,
                     'filter_rules': filter
                 }
@@ -948,7 +940,6 @@ Ext.define(
         this.disableCheckboxes(
             {
                 'filter_rules': 1,
-                'expand_users': 1,
                 'display_property': 1
             }
         );

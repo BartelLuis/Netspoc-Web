@@ -57,8 +57,8 @@ func TestLegacyRuleGetsAVisibleServiceDiff(t *testing.T) {
 	next := validEditablePolicy()
 	normalizeEditablePolicy(next)
 	changes := diffPolicies(previous, next)
-	if !slices.ContainsFunc(changes, func(change map[string]string) bool {
-		return change["type"] == "service" && change["name"] == "web" && change["change"] == "changed"
+	if !slices.ContainsFunc(changes, func(change policyChange) bool {
+		return change.Type == "service" && change.Name == "web" && change.Change == "changed"
 	}) {
 		t.Fatalf("service-user migration is missing from diff: %#v", changes)
 	}
@@ -121,7 +121,7 @@ func TestRuleUserSideControlsPublishedObjects(t *testing.T) {
 	}
 }
 
-func TestBothUserSidesAreHiddenUntilExpanded(t *testing.T) {
+func TestRuleOverviewShowsExplicitObjectsForBothUserSides(t *testing.T) {
 	p := validEditablePolicy()
 	p.Services[0].Rules[0].HasUser = "both"
 	s := publishServiceUserFixture(t, p)
@@ -141,8 +141,8 @@ func TestBothUserSidesAreHiddenUntilExpanded(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Records) != 1 || !slices.Equal(response.Records[0].Src, []string{"User"}) || !slices.Equal(response.Records[0].Dst, []string{"User"}) {
-		t.Fatalf("both user sides were not represented as User: %#v", response.Records)
+	if len(response.Records) != 1 || !slices.Equal(response.Records[0].Src, []string{"10.20.0.0/16"}) || !slices.Equal(response.Records[0].Dst, []string{"10.20.0.10"}) {
+		t.Fatalf("rule overview did not retain explicit objects: %#v", response.Records)
 	}
 }
 

@@ -98,12 +98,6 @@ Ext.define(
                             dock: 'top',
                             items: [
                                 {
-                                    xtype: 'checkbox',
-                                    id: 'cb_expand_users',
-                                    name: 'expand_users',
-                                    boxLabel: 'User expandieren'
-                                },
-                                {
                                     id: 'cb_show_names',
                                     xtype: 'checkbox',
                                     name: 'display_property',

@@ -83,6 +83,7 @@ test('policy serialization emits the top-level FQDN contract', () => {
   ];
 
   const context = {
+    namingCatalog: { version: 'v1' },
     split: (value) => value.split(',').map((part) => part.trim()).filter(Boolean),
     $: (selector) => {
       if (selector === '#policy-name') return { value: 'policy' };
@@ -91,7 +92,7 @@ test('policy serialization emits the top-level FQDN contract', () => {
     $$: (selector, root) => {
       if (selector === '[data-field]' && root === fqdn) return fqdn.fields;
       if (selector === '.fqdn') return [fqdn];
-      if (['.user', '.owner', '.network', '.service'].includes(selector)) return [];
+      if (['.user', '.owner', '.tenant', '.target-context', '.network', '.service'].includes(selector)) return [];
       throw new Error(`Unexpected selector: ${selector}`);
     },
   };
@@ -100,6 +101,9 @@ test('policy serialization emits the top-level FQDN contract', () => {
 
   assert.deepEqual(JSON.parse(JSON.stringify(context.policy())), {
     name: 'policy',
+    tenants: [],
+    target_contexts: [],
+    naming_catalog: { version: 'v1' },
     users: [],
     owners: [],
     networks: [],

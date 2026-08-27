@@ -25,9 +25,10 @@ COPY --chown=policyweb:policyweb htdocs/silk-icons /srv/policyweb/silk-icons
 COPY --chown=policyweb:policyweb resources /srv/policyweb/resources
 COPY --chown=policyweb:policyweb go/pkg/backend/mail-templates /srv/policyweb/templates/mail
 COPY --chown=policyweb:policyweb go/pkg/backend/html-templates /srv/policyweb/templates/html
-COPY --chown=policyweb:policyweb app.html admin.html index.html start.html CHANGELOG.md passwd.html /srv/policyweb/
+COPY --chown=policyweb:policyweb app.html admin.html index.html ldap-login.html start.html CHANGELOG.md passwd.html /srv/policyweb/
 RUN test -f /srv/policyweb/app.html \
-    -a -f /srv/policyweb/start.html \
+	-a -f /srv/policyweb/start.html \
+	-a -f /srv/policyweb/ldap-login.html \
     -a -f /srv/policyweb/CHANGELOG.md \
     -a -f /srv/policyweb/extjs4/ext-all.js \
     -a -f /srv/policyweb/app/Application.js

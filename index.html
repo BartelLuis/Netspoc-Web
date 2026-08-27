@@ -48,6 +48,17 @@
 		#unten {
 			clear: both
 		}
+
+		#maintenance-banner {
+			clear: both;
+			margin: 1rem 0;
+			padding: .85rem 1rem;
+			border: 2px solid #b36b00;
+			border-radius: 4px;
+			background: #fff3cd;
+			color: #563b00;
+			font-weight: 600;
+		}
 	</style>
 	<link rel="stylesheet" href="resources/css/theme-static.css">
 	<link rel="icon" type="image/vnd.microsoft.icon" href="resources/images/policyweb.ico">
@@ -71,8 +82,10 @@
 				<input id="txtf_password" name="pass" type="password" size="15" autocomplete="current-password" required></label>
 			<input id="btn_login" type="submit" value="Login">
 			<div class="small">Neues <a href="passwd.html">Kennwort anfordern</a></div>
+			<div class="small"><a href="ldap-login.html">Anmeldung über LDAP</a></div>
 		</fieldset>
 	</form>
+	<div id="maintenance-banner" role="status" hidden></div>
 
 	<p id="unten">
 		<a href="start.html">Changelog</a>
@@ -82,6 +95,17 @@
 	</p>
 
 	<iframe src="start.html" class="flex-container" title="Basisinformationen und Changelog"></iframe>
+	<script>
+		fetch('backend6/maintenance-status', { cache: 'no-store' })
+			.then(response => response.ok ? response.json() : Promise.reject(new Error(response.statusText)))
+			.then(status => {
+				if (!status.maintenance_mode) return;
+				const banner = document.getElementById('maintenance-banner');
+				banner.textContent = status.message;
+				banner.hidden = false;
+			})
+			.catch(() => {});
+	</script>
 </body>
 
 </html>

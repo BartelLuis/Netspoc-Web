@@ -13,14 +13,16 @@ import (
 
 func collectorPolicy() *editablePolicy {
 	return &editablePolicy{
-		Name: "collector-policy",
+		Name:           "collector-policy",
+		Tenants:        []tenant{{MKZ: "M120", Name: "Mandant 120", Active: true}},
+		TargetContexts: []targetContext{{Name: "prod", ContextType: "dedicated", AssignedMKZ: "M120"}},
 		Users: []editableUser{
-			{Email: "root@example.net", Role: "admin", Password: "secret"},
-			{Email: "noc@example.net", Role: "viewer", Password: "secret"},
-			{Email: "multi@example.net", Role: "viewer", Password: "secret"},
-			{Email: "scope@example.net", Role: "viewer", Password: "secret"},
-			{Email: "fb1@example.net", Role: "viewer", Password: "secret"},
-			{Email: "foreign@example.net", Role: "viewer", Password: "secret"},
+			{Email: "root@example.net", Role: "admin"},
+			{Email: "noc@example.net", Role: "viewer"},
+			{Email: "multi@example.net", Role: "viewer"},
+			{Email: "scope@example.net", Role: "viewer"},
+			{Email: "fb1@example.net", Role: "viewer"},
+			{Email: "foreign@example.net", Role: "viewer"},
 		},
 		Owners: []editableOwner{
 			{Name: "ROOT", Admins: []string{"root@example.net"}},
@@ -34,27 +36,27 @@ func collectorPolicy() *editablePolicy {
 		},
 		Networks: []editableNetwork{
 			{
-				Name: "alpha", CIDR: "10.10.0.0/24", Owner: "FB1",
-				Hosts: []editableHost{{Name: "alpha-host", IP: "10.10.0.10", Owner: "FB1"}},
+				Name: "alpha", CIDR: "10.10.0.0/24", Owner: "FB1", Zone: "GDMZ",
+				Hosts: []editableHost{{Name: "alpha-host", IP: "10.10.0.10", Owner: "FB1", Zone: "IDMZ"}},
 			},
 			{
-				Name: "branch", CIDR: "10.20.0.0/24", Owner: "BRANCH",
-				Hosts: []editableHost{{Name: "branch-host", IP: "10.20.0.10", Owner: "BRANCH"}},
+				Name: "branch", CIDR: "10.20.0.0/24", Owner: "BRANCH", Zone: "GDMZ",
+				Hosts: []editableHost{{Name: "branch-host", IP: "10.20.0.10", Owner: "BRANCH", Zone: "IDMZ"}},
 			},
 			{
-				Name: "sibling", CIDR: "10.30.0.0/24", Owner: "FB2",
-				Hosts: []editableHost{{Name: "sibling-host", IP: "10.30.0.10", Owner: "FB2"}},
+				Name: "sibling", CIDR: "10.30.0.0/24", Owner: "FB2", Zone: "GDMZ",
+				Hosts: []editableHost{{Name: "sibling-host", IP: "10.30.0.10", Owner: "FB2", Zone: "IDMZ"}},
 			},
 			{
-				Name: "foreign", CIDR: "10.40.0.0/24", Owner: "FOREIGN",
-				Hosts: []editableHost{{Name: "foreign-host", IP: "10.40.0.10", Owner: "FOREIGN"}},
+				Name: "foreign", CIDR: "10.40.0.0/24", Owner: "FOREIGN", Zone: "GDMZ",
+				Hosts: []editableHost{{Name: "foreign-host", IP: "10.40.0.10", Owner: "FOREIGN", Zone: "IDMZ"}},
 			},
 		},
 		Services: []editableService{
-			collectorService("alpha-service", "FB1", "alpha", "alpha-host", "tcp 101"),
-			collectorService("branch-service", "BRANCH", "branch", "branch-host", "tcp 102"),
-			collectorService("sibling-service", "FB2", "sibling", "sibling-host", "tcp 103"),
-			collectorService("foreign-service", "FOREIGN", "foreign", "foreign-host", "tcp 104"),
+			collectorService("alpha-service", "FB1", "alpha", "alpha-host", "tcp 443"),
+			collectorService("branch-service", "BRANCH", "branch", "branch-host", "tcp 443"),
+			collectorService("sibling-service", "FB2", "sibling", "sibling-host", "tcp 443"),
+			collectorService("foreign-service", "FOREIGN", "foreign", "foreign-host", "tcp 443"),
 		},
 	}
 }
@@ -63,10 +65,16 @@ func collectorService(name, owner, network, host, protocol string) editableServi
 	return editableService{
 		Name: name, Owners: []string{owner},
 		Rules: []editableRule{{
-			Action:       "permit",
-			Sources:      []string{"network:" + network},
-			Destinations: []string{"host:" + host},
-			Protocols:    []string{protocol},
+			Action:          "permit",
+			Sources:         []string{"network:" + network},
+			Destinations:    []string{"host:" + host},
+			Protocols:       []string{protocol},
+			RuleGroup:       "SRV",
+			Owner:           owner,
+			ChangeReference: "CHG-1",
+			ReviewDate:      "2030-12-31",
+			Purpose:         "Collector access",
+			TargetContext:   "prod",
 		}},
 	}
 }

@@ -2,8 +2,9 @@
 
 Policy-Web ist eine browserbasierte Oberfläche zum Anzeigen und Verwalten von
 Netzwerk-Policies. Verantwortungsbereiche, Benutzer, Netze, IP-Adressen,
-FQDN-Ziele, Dienste und Regeln werden zentral gepflegt. Änderungen werden zunächst als Diff
-erstellt und erst nach einer Bestätigung veröffentlicht.
+FQDN-Ziele, Dienste und Regeln werden zentral gepflegt. Änderungen durchlaufen
+verbindlich Staging, Vier-Augen-Freigabe, Veröffentlichung und – sofern
+konfiguriert – ein verifiziertes FortiGate-Deployment.
 
 Die Anwendung wird als fertiger Docker-Container bereitgestellt. Ein Download
 des Quellcodes oder ein lokaler Build ist für den Betrieb nicht erforderlich.
@@ -19,7 +20,7 @@ des Quellcodes oder ein lokaler Build ist für den Betrieb nicht erforderlich.
 - [Policies verwalten](#policies-verwalten)
 - [Policies durchsuchen](#policies-durchsuchen)
 - [SMTP konfigurieren](#smtp-konfigurieren)
-- [Fortinet-Status konfigurieren](#fortinet-status-konfigurieren)
+- [Fortinet-Staging und Deployment konfigurieren](#fortinet-staging-und-deployment-konfigurieren)
 - [Updates und Rollback](#updates-und-rollback)
 - [Backup](#backup)
 - [TLS-Reverse-Proxy](#betrieb-hinter-einem-tls-reverse-proxy)
@@ -28,15 +29,19 @@ des Quellcodes oder ein lokaler Build ist für den Betrieb nicht erforderlich.
 ## Funktionen
 
 - Policies, Verantwortungsbereiche, Netze, IP-Adressen, FQDN-Ziele, Dienste und Regeln verwalten
-- Lokale Anmeldung per E-Mail-Adresse und Kennwort ohne LDAP-Anbindung
-- Rollen für Leser, Bearbeiter und Administratoren
+- Lokale Anmeldung sowie optionale LDAP-Anmeldung mit manuellem Benutzer-Sync
+- Getrennte Rollen für Leser, Bearbeiter, Reviewer, Deployer und Administratoren
 - Hierarchische Verantwortungsbereiche mit lesendem Zugriff auf Unterbereiche
 - Helle und dunkle Darstellung mit automatischer Systemerkennung
-- Entwürfe, überprüfbare Diffs und unveränderliche Policy-Versionen
+- Entwürfe, Staging mit Risiko- und Command-Vorschau, Vier-Augen-Freigabe und unveränderliche Policy-Versionen
+- Deterministische, ausschließlich serverseitig erzeugte FortiGate-Policy-Namen
+- Regeln zwischen Diensten kopieren oder verschieben
+- Geplanter Wartungsmodus mit Admin-Zugang und Hinweis auf der Startseite
 - Suche nach Dienstnamen, Beschreibungen, IP-Adressen, FQDNs, Netzobjekten und Ports
 - Historische Policies und Diffs einsehen
 - Optionaler Versand von Kennwort-Mails über SMTP
-- Optionaler Fortinet-Status über einen authentifizierten JSON-Endpunkt
+- FortiOS-7.4.x-Preflight, Deployment-Verifikation, automatischer Fehler-Rollback und Drift-Prüfung
+- Audit-Protokoll, Where-used-Prüfung und Rollback historischer Revisionen
 - Manuell pflegbares Changelog auf der Startseite
 
 ## Voraussetzungen
@@ -143,7 +148,10 @@ die im Image enthaltenen Vorlagen:
   "mail_transport": "sendmail",
   "mail_template": "/srv/policyweb/templates/mail",
   "html_template": "/srv/policyweb/templates/html",
-  "fortinet_targets": []
+  "public_base_url": "http://127.0.0.1:8080",
+  "fortinet_targets": [],
+  "maintenance_mode": false,
+  "maintenance_message": ""
 }
 ```
 
@@ -152,6 +160,54 @@ werden. Der Sendmail-Modus ermöglicht zwar den Start, im Container ist jedoch
 kein lokaler Mailserver installiert. Für Mailfunktionen muss später SMTP
 konfiguriert werden.
 
+`public_base_url` ist der feste, extern sichtbare Ursprung für Links in
+Kennwort-Bestätigungsmails. Er muss exakt dem Ursprung entsprechen, unter dem
+der Browser Policy-Web aufruft, damit der Sitzungscookie bei der Bestätigung
+verwendet wird. Produktiv ist eine HTTPS-URL wie
+`https://policy.example.org` einzutragen; unverschlüsseltes HTTP wird nur für
+`localhost` und Loopback-Adressen akzeptiert. Fehlt der Wert, bleibt die
+Kennwortanforderung deaktiviert. Der Link zeigt zunächst eine Bestätigungsseite;
+erst deren explizites Absenden per POST ändert das Kennwort.
+
+`maintenance_mode` und `maintenance_message` sind die Startwerte. Danach kann
+ein Administrator den Wartungsmodus im Admin-Panel sofort aktivieren,
+deaktivieren oder mit Start und Ende planen; dafür ist kein Neustart nötig. Auf
+der Start- und Anmeldeseite erscheint die hinterlegte Nachricht. Während eines
+aktiven Wartungsfensters können sich ausschließlich Administratoren anmelden;
+bereits angemeldete Nicht-Administratoren werden beim nächsten Request
+abgemeldet.
+
+### LDAP-Anmeldung und manueller Benutzersync
+
+LDAP wird über `policyweb.conf` aktiviert. Beispiel für Active Directory:
+
+```json
+{
+  "ldap_uri": "ldaps://ad.example.org:636",
+  "ldap_dn_template": "EXAMPLE\\%s",
+  "ldap_base_dn": "DC=example,DC=org",
+  "ldap_filter_template": "sAMAccountName=%s",
+  "ldap_sync_filter": "(&(objectClass=user)(mail=*))",
+  "ldap_user_attr": "sAMAccountName",
+  "ldap_email_attr": "mail",
+  "ldap_id_attr": "objectGUID",
+  "ldap_bind_dn_env": "POLICYWEB_LDAP_BIND_DN",
+  "ldap_bind_password_env": "POLICYWEB_LDAP_BIND_PASSWORD"
+}
+```
+
+Die Zugangsdaten des ausschließlich lesenden Sync-Kontos werden über die
+referenzierten Umgebungsvariablen bereitgestellt. Administratoren starten den
+Import über „LDAP synchronisieren“ in der Benutzerverwaltung. Zuerst wird eine
+zeitlich begrenzte, benutzergebundene Vorschau angezeigt; erst die Bestätigung
+übernimmt exakt diesen geprüften Stand in den Entwurf. Neu gefundene Konten
+erhalten zunächst die Rolle `viewer`; Rolle und effektive E-Mail-Adresse können
+anschließend lokal geändert werden. LDAP-ID, Benutzername, Herkunft und
+Aktivstatus sind nicht editierbar. Nicht mehr im Verzeichnis gefundene Konten
+werden deaktiviert, nicht gelöscht. LDAP ist ausschließlich über `ldaps://`
+zulässig. Ein LDAP-Benutzer kann sich erst anmelden, nachdem der synchronisierte
+Entwurf veröffentlicht wurde.
+
 ### 4. `.env` anlegen
 
 ```dotenv
@@ -159,7 +215,17 @@ POLICYWEB_IMAGE=ghcr.io/bartelluis/netspoc-web:latest
 POLICYWEB_BIND=127.0.0.1
 POLICYWEB_PORT=8080
 TZ=Europe/Berlin
+POLICYWEB_BOOTSTRAP_TOKEN=ein-langes-zufälliges-einmalgeheimnis
+POLICYWEB_COOKIE_SECURE=false
+POLICYWEB_TRUST_PROXY_HEADERS=false
 ```
+
+`POLICYWEB_BOOTSTRAP_TOKEN` wird nur für die erste Veröffentlichung benötigt
+und im Bootstrap-Formular einmalig eingegeben. Danach sollte die Variable aus
+`.env` entfernt und der Container neu erstellt werden. Die beiden `false`-Werte
+sind ausschließlich für die lokale HTTP-Ersteinrichtung gedacht; die
+Produktivwerte hinter einem vertrauenswürdigen TLS-Reverse-Proxy stehen im
+Abschnitt [Betrieb hinter einem TLS-Reverse-Proxy](#betrieb-hinter-einem-tls-reverse-proxy).
 
 Die Datei kann später auch SMTP- und Fortinet-Zugangsdaten enthalten und sollte
 daher nur für den Administrator lesbar sein:
@@ -211,9 +277,10 @@ Die erwartete Antwort lautet:
 ## Ersteinrichtung
 
 Solange noch keine Policy vorhanden ist, ist die Initialadministration ohne
-Login erreichbar. Die Anwendung darf in diesem Zustand nicht öffentlich ins
-Internet gestellt werden. Es gibt kein voreingestelltes Benutzerkonto und kein
-Standardkennwort.
+Login erreichbar, die Veröffentlichung verlangt jedoch das serverseitige
+`POLICYWEB_BOOTSTRAP_TOKEN`. Die Anwendung darf in diesem Zustand trotzdem
+nicht öffentlich ins Internet gestellt werden. Es gibt kein voreingestelltes
+Benutzerkonto und kein Standardkennwort.
 
 Bei einer Installation auf einem entfernten Server kann ein SSH-Tunnel genutzt
 werden:
@@ -230,16 +297,29 @@ http://127.0.0.1:8080/admin.html
 
 Für die erste Policy sind mindestens folgende Angaben erforderlich:
 
-1. Einen Policy-Namen eintragen.
-2. Einen Benutzer mit E-Mail-Adresse, Kennwort und Rolle `Administrator` anlegen.
-3. Einen Verantwortungsbereich anlegen.
-4. Die E-Mail-Adresse des Benutzers als Bereichsadministrator eintragen.
-5. Optional bereits Netze, IP-Adressen, FQDN-Ziele, Dienste und Regeln anlegen.
-6. Auf **Diff erstellen** klicken. Bei der Ersteinrichtung wird dadurch die erste
+1. Das einmalige Bootstrap-Token aus `.env` eingeben.
+2. Einen Policy-Namen eintragen.
+3. Einen Benutzer mit E-Mail-Adresse und Rolle `Administrator` anlegen.
+4. Einen Verantwortungsbereich anlegen.
+5. Die E-Mail-Adresse des Benutzers als Bereichsadministrator eintragen.
+6. Optional bereits Netze, IP-Adressen, FQDN-Ziele, Dienste und Regeln anlegen.
+7. Auf **Staging prüfen** klicken. Nur bei der Ersteinrichtung wird die erste
    Policy direkt veröffentlicht.
 
-Danach erfolgt die Anmeldung unter `http://127.0.0.1:8080/` mit der angelegten
-E-Mail-Adresse und dem Kennwort.
+Kennwörter sind absichtlich kein Bestandteil einer Policy, eines Entwurfs oder
+einer Staging-Revision. Nach der ersten Veröffentlichung wird das lokale
+Administratorkonto daher einmalig über den Hilfscontainer aktiviert:
+
+```sh
+read -r -s -p 'Neues Kennwort: ' POLICYWEB_PASSWORD; echo
+printf '%s' "$POLICYWEB_PASSWORD" | docker compose run --rm -T create-user \
+  --email admin@example.net --password-stdin
+unset POLICYWEB_PASSWORD
+```
+
+Alternativ kann nach eingerichteter Mail-Konfiguration die verifizierte
+Kennwortanforderung unter `http://127.0.0.1:8080/passwd.html` verwendet werden.
+Danach erfolgt die Anmeldung unter `http://127.0.0.1:8080/`.
 
 ## Rollen und Berechtigungen
 
@@ -250,11 +330,16 @@ kann.
 
 | Rolle | Berechtigungen |
 | --- | --- |
-| Leser | Veröffentlichte Policies, Netze, Dienste und Diffs ansehen und durchsuchen |
-| Bearbeiter | Zusätzlich Entwürfe ändern, speichern und neue Diffs erstellen |
-| Administrator | Zusätzlich Diffs bestätigen und als neue Policy veröffentlichen |
+| Leser (`viewer`) | Veröffentlichte Policies, Netze und Dienste ansehen und durchsuchen |
+| Bearbeiter (`editor`) | Fachliche Entwürfe ändern, speichern und in das Staging geben; keine Benutzer- oder Rechteverwaltung |
+| Reviewer (`reviewer`) | Staging, Risiken und Commands prüfen sowie fremde Revisionen freigeben oder ablehnen |
+| Deployer (`deployer`) | Veröffentlichte Revisionen ausrollen und Drift prüfen |
+| Administrator (`admin`) | Benutzer, LDAP-Sync, Wartungsmodus, Rollback und alle fachlichen Funktionen verwalten |
 
-Leser sehen den Menüpunkt **Administration** nicht. Ein übergeordneter
+Auch Administratoren dürfen eine selbst erstellte Revision nicht freigeben.
+Rollenänderungen werden erst mit ihrer veröffentlichten Policy wirksam; ein
+Entwurf kann daher keine zusätzlichen Rechte vergeben. Leser sehen den
+Menüpunkt **Administration** nicht. Ein übergeordneter
 Verantwortungsbereich besitzt lesenden Zugriff auf seine untergeordneten
 Bereiche.
 
@@ -268,14 +353,21 @@ Einstellung des Betriebssystems.
 
 ## Policies verwalten
 
-Administratoren und Bearbeiter öffnen nach der Anmeldung den Menüpunkt
-**Administration**.
+Administratoren, Bearbeiter, Reviewer und Deployer öffnen nach der Anmeldung
+den Menüpunkt **Administration**; die Oberfläche blendet nicht erlaubte Aktionen
+rollenabhängig aus.
 
 ### Benutzer
 
 - Die E-Mail-Adresse ist gleichzeitig der Anmeldename.
-- Das Kennwort ist bei neuen Benutzern erforderlich.
-- Ein leeres Kennwortfeld lässt ein bestehendes Kennwort unverändert.
+- Lokale Identitäten werden zunächst ohne Credential veröffentlicht. Danach
+  aktiviert der Benutzer sein Kennwort über `passwd.html`; Administratoren
+  können dafür alternativ das `create-user`-Werkzeug verwenden.
+- Speichern, Staging, Veröffentlichung und Policy-Rollback verändern niemals
+  lokale Kennwörter. Drafts und Revisionen enthalten weder Klartext noch Hash.
+- Bei LDAP-Benutzern sind ausschließlich E-Mail-Adresse und Policy-Rolle
+  editierbar; Verzeichnis-ID, Benutzername, Quelle und Aktivstatus bleiben
+  serverseitig geschützt.
 - Nicht jeder Benutzer sollte Administrator sein.
 
 ### Verantwortungsbereiche
@@ -324,19 +416,68 @@ Administratoren und Bearbeiter öffnen nach der Anmeldung den Menüpunkt
   Dienstes** und der Dienst unter **Genutzte**.
 - Mehrere Quellen, Ziele oder Protokolle werden mit Komma getrennt.
 - Protokolle werden zum Beispiel als `tcp 443`, `udp 53` oder `icmp` angegeben.
+- Regeln lassen sich mitsamt fachlicher Metadaten in einen anderen Dienst
+  kopieren oder verschieben. Eine Kopie erhält serverseitig eine neue stabile
+  Regel-ID; beim Verschieben bleibt sie erhalten.
+- Regelgruppe, Mandant, Zielkontext, Zonen, Owner, Change-Referenz,
+  Review-Datum und Zweck sind strukturierte Pflichtangaben. Temporäre Regeln
+  benötigen zusätzlich Ablaufdatum und Rückbauverantwortlichen.
+- Policy-Name und Kommentar sind schreibgeschützte Ableitungen. Das Backend
+  berechnet sie bei Vorschau, Staging und Veröffentlichung erneut; übermittelte
+  Namen werden nie übernommen. Namen sind FortiGate-kompatibel, höchstens 35
+  Zeichen lang und enthalten Zonenfluss, Servicecode und stabile Kurz-ID.
+- Mandanten, Zielkontexte, Zonenränge, Zonen-Kurzcodes und Servicecodes werden
+  ausschließlich von Administratoren im versionierten **Naming-Katalog**
+  gepflegt. Jede inhaltliche Katalogänderung benötigt eine neue
+  Katalogversion. Bereits veröffentlichte Regeln behalten ihren Namen und ihre
+  ursprüngliche Naming-Version; nur neue Regeln werden mit dem neuen Katalog
+  benannt.
+- Die frühere Funktion „User expandieren“ ist vollständig entfernt. Detail- und
+  Suchansichten zeigen die tatsächlich an der Regel gespeicherten Quellen und
+  Ziele.
 
-### Entwurf, Diff und Veröffentlichung
+### Entwurf, Staging, Freigabe und Deployment
 
-1. **Entwurf speichern** speichert den aktuellen Arbeitsstand, ändert aber nicht
-   die aktive Policy.
-2. **Diff erstellen** validiert alle Referenzen und legt eine neue, eindeutige
-   Policy-ID an.
-3. Ein Administrator prüft den Diff und bestätigt ihn.
-4. Erst die Bestätigung veröffentlicht genau diese Revision.
+1. **Entwurf speichern** speichert den aktuellen Arbeitsstand mit einer
+   Versionsnummer, ändert aber nicht die aktive Policy.
+2. **Staging prüfen** verlangt Kommentar und Change-Referenz, validiert die
+   Policy, bewertet Risiken und friert die exakten Deployment-Commands mit
+   einem Plan-Hash ein.
+3. Eine zweite Person mit Reviewer- oder Administratorrolle prüft den
+   strukturierten Vorher-/Nachher-Diff, die feldgenauen Änderungen einschließlich
+   aller serverseitigen Naming-Ableitungen, Risiken, Validierung und
+   Command-Vorschau. Sie kann freigeben oder mit Pflichtkommentar ablehnen.
+4. Die Freigabe veröffentlicht exakt die geprüfte Revision. Policy, Validation
+   und Deployment-Plan sind gemeinsam an den Approval-Hash gebunden.
+5. Ein Deployer oder Administrator kann anschließend das Deployment starten.
+   Vor der ersten Mutation werden Ziel, Scope, FortiOS-Version, Policy-Anker
+   und Geräte-Ist-Zustand geprüft. Jeder Schritt wird verifiziert; bei einem
+   Fehler erfolgt ein automatischer Best-effort-Rollback aus vollständigen
+   Snapshots.
 
-Ändert sich die zugrunde liegende Policy zwischen Erstellung und Bestätigung,
-muss der Diff neu erstellt werden. Frühere und noch ausstehende Revisionen sind
-in der Diff- und Policy-Historie einsehbar.
+Ändern sich Entwurf, Basisrevision oder Zielkonfiguration zwischen Staging,
+Freigabe und Deployment, wird der Vorgang abgebrochen und muss neu gestaged
+werden. Frühere, ausstehende, abgelehnte und veröffentlichte Revisionen sind in
+der Historie einsehbar. Ein Rollback erzeugt immer einen neuen Entwurf und eine
+neue prüfpflichtige Revision; er umgeht das Vier-Augen-Prinzip nicht.
+
+Solange eine veröffentlichte, ausführbare Revision nicht auf allen gebundenen
+FortiGate-Zielen erfolgreich ausgerollt wurde, ist die Veröffentlichung der
+nächsten Revision gesperrt. Dadurch bleibt die vorherige Publikation zugleich
+die nachweisliche Geräte-Baseline für den nächsten Delta-Plan. Änderungen an
+Zielmenge, VDOM, Endpoint oder Preview-/Deployment-Status gelten als explizite
+Gerätemigration und werden vom normalen Policy-Workflow abgewiesen.
+
+Bei einer Aktualisierung von einer Altinstallation ohne unveränderlichen,
+verifizierten Deployment-Plan wird der nächste Stage bewusst als vollständiger
+Abgleich `leer → Zielstand` erzeugt. Er enthält keine angenommenen Löschungen.
+Bereits vorhandene gleichnamige Geräteobjekte werden dabei nur akzeptiert,
+wenn sie dem freigegebenen Zielzustand exakt entsprechen; abweichende oder
+nicht eindeutig zuordenbare Objekte blockieren das Deployment.
+Eine vorhandene Legacy-Policy gilt außerdem nicht als abgeschlossene
+Administrator-Ersteinrichtung; die einmalige Migration wird daher mit dem
+Bootstrap-Token ausdrücklich autorisiert. Erst danach steht der reguläre
+Vier-Augen-Workflow zur Verfügung.
 
 ## Policies durchsuchen
 
@@ -387,15 +528,16 @@ entfernt. Der Client verwendet STARTTLS, wenn der Server es anbietet. Für
 produktive Installationen sollte ein vertrauenswürdiger SMTP-Relay verwendet
 werden, der TLS verlangt.
 
-## Fortinet-Status konfigurieren
+## Fortinet-Staging und Deployment konfigurieren
 
-Optional kann Policy-Web die Erreichbarkeit und Versionsinformationen von
-FortiGate oder FortiManager abfragen. Die Zugangsdaten werden nur über
-Umgebungsvariablen referenziert. Es gibt dafür derzeit keine eigene
-Geräteansicht in der GUI.
+Policy-Web erzeugt im Staging deterministische CLI- und REST-Kommandos für die
+konfigurierten Zielkontexte. Reale Deployments sind bewusst auf FortiGate mit
+FortiOS `7.4.x` begrenzt und werden aktuell gegen FortiOS `7.4.12` betrieben.
+Der Preflight liest die Geräteversion vor jeder Mutation und bricht bei jeder
+anderen Minor-Version ab. FortiManager-Pläne können geprüft werden, bleiben aber
+ohne explizites Managed-Device-Installationsziel Vorschau-only.
 
-Beispiel für den Eintrag `fortinet_targets` in der bestehenden
-`policyweb.conf`:
+Beispiel für `fortinet_targets` in `policyweb.conf`:
 
 ```json
 {
@@ -405,13 +547,28 @@ Beispiel für den Eintrag `fortinet_targets` in der bestehenden
       "type": "fortigate",
       "url": "https://edge-1.example.net",
       "vdom": "root",
+      "target_contexts": ["prod-root"],
+      "zone_interfaces": {
+        "EXT": "port1",
+        "GDMZ": "port2",
+        "IDMZ": "port3"
+      },
+      "policy_insert_before": "POLICYWEB-END",
+      "allow_deploy": true,
       "token_env": "EDGE_1_API_TOKEN"
     },
     {
-      "name": "manager-1",
+      "name": "manager-1-preview",
       "type": "fortimanager",
       "url": "https://fmg.example.net",
       "adom": "production",
+      "policy_package": "edge-policy",
+      "target_contexts": ["shared-edge"],
+      "zone_interfaces": {
+        "EXT": "wan",
+        "GDMZ": "gdmz"
+      },
+      "allow_deploy": false,
       "username_env": "FMG_API_USER",
       "password_env": "FMG_API_PASSWORD"
     }
@@ -419,7 +576,53 @@ Beispiel für den Eintrag `fortinet_targets` in der bestehenden
 }
 ```
 
-Passende Einträge in `.env`:
+`policy_insert_before` bezeichnet eine bereits vorhandene, eindeutig benannte
+Anker-Policy. Policy-Web verkettet den gesamten freigegebenen Policy-Block:
+die letzte Regel liegt vor dem konfigurierten Anker, jede vorherige Regel vor
+ihrem freigegebenen Nachfolger. Das Staging zeigt die normalisierte Ziel-URL,
+den exakten VDOM/Scope, die Semantik- und Ausführungsmodell-Version sowie für
+jeden REST-Zweig das rohe CMDB-JSON an, das ohne zusätzliches `data`-Envelope
+gesendet wird. Ohne Anker ist `allow_deploy: true` ungültig. Updates behalten
+ihre bestehende Position.
+
+Die Ausführung erfolgt in sicherheitsgerichteten Phasen: Zuerst werden
+content-addressierte Address-/Address6-/Service-Objekte geprüft oder angelegt.
+Neue Policies entstehen anschließend deaktiviert und werden von unten nach
+oben positioniert. Danach werden gewünschte DENY-Policies von oben nach unten
+finalisiert, veraltete ACCEPT-Policies entfernt und erst dann gewünschte
+ACCEPT-Policies finalisiert. Nicht mehr gewünschte DENY-Policies werden zuletzt
+gelöscht. Jeder mutierende Schritt wird erneut gelesen und verifiziert; bei
+einem Fehler wird anhand der gebundenen Snapshots kompensiert. So bleiben die
+First-Match-Reihenfolge und die DENY-vor-ACCEPT-Schranke auch bei mehreren
+gleichzeitigen Neuanlagen deterministisch. Ein Rollback beginnt erst, wenn die
+Post-States aller betroffenen Schritte eindeutig abgeglichen wurden. Gelöschte
+Policies werden zunächst deaktiviert mit ihrer bisherigen `policyid` und
+Position wiederhergestellt; DENY-Regeln werden vor ACCEPT-Regeln reaktiviert,
+neu angelegte DENYs zuletzt entfernt und Objekte erst nach den Policies
+kompensiert.
+
+Große CMDB-Tabellen werden vollständig über `start`/`count` gelesen. Policy-Web
+übernimmt eine paginierte Momentaufnahme nur, wenn alle Seiten dieselbe
+FortiOS-Revision melden, die MKeys eindeutig bleiben und die Seitenfolge
+vollständig ist; andernfalls wird vor einer Mutation abgebrochen. Eine
+Match-Änderung an einer bereits aktiven DENY-Policy wird nicht in-place
+ausgeführt. Dafür wird die Regel zuerst mit neuer Regelidentität kopiert und
+die alte Regel im selben geprüften Entwurf entfernt, sodass der Ersatz
+deaktiviert vorbereitet werden kann.
+
+Die Commands legen ausschließlich die benötigten Address-, Address6- und
+Custom-Service-Objekte sowie Einträge in der einheitlichen FortiOS-7.4-Tabelle
+`firewall policy` an. IPv6-Regeln verwenden dort `srcaddr6` und `dstaddr6`.
+Address- und Service-Objektnamen sind aus Semantikversion, Typ und finalem
+REST-Inhalt abgeleitet; eine fachliche oder Renderer-Änderung erzeugt deshalb
+ein neues Objekt, statt die Bedeutung eines von einer aktiven Policy
+verwendeten Objekts vorzeitig in-place zu ändern.
+Beim Entfernen einer Regel wird nur die exakt erwartete, zuvor veröffentlichte
+Policy gelöscht und nur, wenn ihr Geräte-Ist-Zustand noch übereinstimmt.
+Address- oder Service-Objekte werden nie automatisch gelöscht, weil sie von
+geräte-lokalen Regeln geteilt sein können.
+
+Passende Zugangsdaten in `.env`:
 
 ```dotenv
 EDGE_1_API_TOKEN=fortigate-api-token
@@ -427,11 +630,14 @@ FMG_API_USER=api-user
 FMG_API_PASSWORD=api-kennwort
 ```
 
-Die Ziel-URL muss HTTPS verwenden. Für eine interne Zertifizierungsstelle kann
-eine PEM-Datei read-only in den Container gemountet und über `ca_file`
-referenziert werden. `insecure_skip_verify` sollte nicht in Produktion
-verwendet werden. Die Integration zeigt den Status an; sie installiert keine
-Policy auf dem Gerät.
+Der FortiGate-Token sollte einem eigenen REST-API-Administrator mit minimalen
+Rechten und Trusted Hosts gehören. Secrets werden nicht in `policyweb.conf`,
+Staging-Plänen oder Audit-Ereignissen gespeichert. Die Ziel-URL muss HTTPS
+verwenden. Für eine interne Zertifizierungsstelle kann eine PEM-Datei read-only
+gemountet und über `ca_file` referenziert werden. `insecure_skip_verify` wird
+für alle authentifizierten Fortinet-Ziele generell abgelehnt: Auch reine
+Status- oder Drift-Abfragen dürfen Bearer-Token oder FortiManager-Zugangsdaten
+nie über eine ungeprüfte TLS-Verbindung senden.
 
 Nach einer Änderung von `policyweb.conf` oder `.env` muss der Container neu
 erstellt werden:
@@ -440,14 +646,11 @@ erstellt werden:
 docker compose up -d --force-recreate policyweb
 ```
 
-Ein angemeldeter Benutzer kann den Status anschließend als JSON unter folgendem
-Endpunkt abrufen:
+Status, Staging-Preview, Deployment und Drift-Prüfung stehen im Admin-Panel zur
+Verfügung. Der reine Status ist für angemeldete Benutzer außerdem unter
+`/backend/fortinet/status` abrufbar.
 
-```text
-/backend/fortinet/status
-```
-
-## Kennwort per Kommandozeile zurücksetzen
+## Kennwort per Kommandozeile aktivieren oder zurücksetzen
 
 Falls ein Benutzer nicht mehr über die Weboberfläche verwaltet werden kann,
 kann sein lokales Kennwort mit dem Hilfscontainer angelegt oder zurückgesetzt
@@ -550,6 +753,18 @@ Reverse-Proxy freigeschaltet werden; Clients sollten ausschließlich die
 HTTPS-Adresse verwenden. Der HSTS-Header verhindert nach dem ersten sicheren
 Aufruf weitere unverschlüsselte Zugriffe auf diesen Host.
 
+Hinter dem vertrauenswürdigen Reverse-Proxy müssen anschließend in `.env` diese
+Werte gesetzt und der Container neu erstellt werden:
+
+```dotenv
+POLICYWEB_COOKIE_SECURE=true
+POLICYWEB_TRUST_PROXY_HEADERS=true
+```
+
+Der Proxy muss eingehende `X-Forwarded-*`-Header von Clients verwerfen und
+selbst korrekt setzen. Ohne direkten, kontrollierten Proxy darf
+`POLICYWEB_TRUST_PROXY_HEADERS` nicht aktiviert werden.
+
 ## Fehlerdiagnose
 
 ### Container startet nicht oder ist `unhealthy`
@@ -576,8 +791,8 @@ docker compose restart policyweb
 
 ### Administration wird nicht angezeigt
 
-Die Administration ist nur für Benutzer mit der Policy-Rolle `Bearbeiter` oder
-`Administrator` sichtbar. Leser sehen ausschließlich die normalen Ansichten.
+Die Administration ist nur für Bearbeiter, Reviewer, Deployer und
+Administratoren sichtbar. Leser sehen ausschließlich die normalen Ansichten.
 
 ### Sitzung ist abgelaufen
 
@@ -593,11 +808,13 @@ Prüfen, ob die Änderung als Diff bestätigt und veröffentlicht wurde, ob der
 richtige Verantwortungsbereich ausgewählt ist und ob die Ressource diesem oder
 einem untergeordneten Bereich gehört.
 
-### Ein Diff kann nicht bestätigt werden
+### Ein Staging kann nicht bestätigt werden
 
-Wurde seit der Diff-Erstellung bereits eine andere Policy veröffentlicht, ist
-die Basisrevision veraltet. Den Entwurf erneut prüfen und einen neuen Diff
-erstellen.
+Wurde seit dem Staging bereits eine andere Policy veröffentlicht, ist die
+Basisrevision veraltet. Den Entwurf erneut prüfen und neu stagen. Creator und
+Approver müssen verschiedene Konten sein; außerdem werden Revisionen ohne
+Kommentar, Change-Referenz, Validation und unveränderten Deployment-Plan
+serverseitig abgelehnt.
 
 ### Mails werden nicht versendet
 
@@ -625,6 +842,8 @@ docker compose pull
   nur an `127.0.0.1` binden.
 - `.env`, Konfiguration und Backups nicht in ein öffentliches Repository legen.
 - Nur benötigte Fortinet-Rechte an API-Benutzer oder Token vergeben.
+- LDAP ausschließlich per LDAPS und mit einem lesenden Sync-Servicekonto nutzen.
+- Bootstrap-Token nach der Ersteinrichtung entfernen.
 - Regelmäßig Backups und Updates testen.
 - Niemals versehentlich `docker compose down -v` ausführen.
 

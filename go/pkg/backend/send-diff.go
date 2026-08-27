@@ -58,7 +58,10 @@ func SendDiff() {
 				valid[owner] = true
 			}
 		}
-		userFile := fmt.Sprintf("%s/%s", userStoreDir, email)
+		userFile, pathErr := safeUserFile(userStoreDir, email)
+		if pathErr != nil {
+			continue
+		}
 		store, err := GetUserStore(userFile)
 		if err != nil {
 			fmt.Printf("Error loading user store for %s: %v\n", email, err)
@@ -111,8 +114,13 @@ func SendDiff() {
 				}
 			}
 		}
-		store.SendDiff = sendOk
-		err = store.WriteToFile(userFile)
+		err = updateUserStore(userFile, false, func(current *UserStore) (bool, error) {
+			before := len(current.SendDiff)
+			current.SendDiff = slices.DeleteFunc(current.SendDiff, func(owner string) bool {
+				return !valid[owner]
+			})
+			return len(current.SendDiff) != before, nil
+		})
 		if err != nil {
 			fmt.Printf("Failed to write user store for %s: %v\n", email, err)
 			continue

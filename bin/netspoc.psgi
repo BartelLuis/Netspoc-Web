@@ -359,10 +359,8 @@ sub has_user {
 }
 
 # Substitute objects in rules by ip or name.
-# Substitute 'users' keyword by ip or name of users.
-sub adapt_name_ip_user {
-    my ( $req, $rules, $user_names ) = @_;
-    my $expand_users = $req->param('expand_users');
+sub adapt_name_ip {
+    my ( $req, $rules ) = @_;
     my $disp_prop    = $req->param('display_property') || 'ip';
     my $owner        = $req->param('active_owner');
     my $nat_set      = get_nat_set($owner);
@@ -378,10 +376,6 @@ sub adapt_name_ip_user {
     my @result;
     for my $rule (@$rules) {
         my ( $src, $dst ) = @{$rule}{qw(src dst)};
-        if ($expand_users) {
-            has_user( $rule, 'src' ) and $src = $user_names;
-            has_user( $rule, 'dst' ) and $dst = $user_names;
-        }
         my $get_val = sub {
             my ($names) = @_;
             if ( $disp_prop eq 'ip' ) {
@@ -1083,8 +1077,8 @@ sub get_users {
 
 sub expand_rules {
     my ( $req,   $sname ) = @_;
-    my ( $rules, $users ) = get_matching_rules_and_users( $req, $sname );
-    return adapt_name_ip_user( $req, $rules, $users );
+    my ($rules) = get_matching_rules_and_users( $req, $sname );
+    return adapt_name_ip( $req, $rules );
 }
 
 sub get_rules {
@@ -1101,7 +1095,6 @@ sub get_rules {
 
 sub get_services_and_rules {
     my ( $req, $session ) = @_;
-    my $expand_users = $req->param('expand_users');
     my $services     = service_list( $req, $session );
     my @result;
     for my $sname ( map { $_->{name} } @$services ) {
@@ -1110,11 +1103,6 @@ sub get_services_and_rules {
         # Adapt multi service result.
         for my $rule (@$rules) {
             $rule->{service} = $sname;
-            if ( !$expand_users ) {
-                $rule->{src} = ['User'] if has_user( $rule, 'src' );
-                $rule->{dst} = ['User'] if has_user( $rule, 'dst' );
-            }
-
             # Frontend uses proto instead of prt in this context.
             $rule->{proto} = delete $rule->{prt};
             push @result, $rule;

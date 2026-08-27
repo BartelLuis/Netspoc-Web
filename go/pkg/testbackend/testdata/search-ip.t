@@ -1006,7 +1006,7 @@ search_proto=81
 =RESPONSE_NAMES=["host:B10", "host:Range", "interface:u.Big"]
 
 ############################################################
-=TITLE=Show matching rules with expanded users
+=TITLE=Show matching rules without substituting service users
 =NETSPOC=
 [[topo]]
 =URL=get_rules
@@ -1017,7 +1017,6 @@ service=Test4
 search_ip1=10.2.2.2
 search_ip2=10.1.0.10
 search_proto=81
-expand_users=1
 display_property=name
 =RESPONSE=
 [
@@ -1026,7 +1025,7 @@ display_property=name
         "dst"      : ["host:k"],
         "has_user" : "src",
         "prt"      : ["tcp 81"],
-        "src"      : ["host:B10"]
+        "src"      : []
     }
 ]
 =END=
@@ -1041,7 +1040,6 @@ active_owner=x
 history=p1
 service=Test4
 search_proto=81
-expand_users=1
 display_property=name
 =RESPONSE=
 [
@@ -1050,11 +1048,7 @@ display_property=name
         "dst"      : ["host:k"],
         "has_user" : "src",
         "prt"      : ["tcp 81"],
-        "src"      : [
-            "host:B10", "host:Range",
-            "host:k",   "interface:u.Big",
-            "network:DMZ"
-        ]
+        "src"      : []
     }
 ]
 =END=
@@ -1115,7 +1109,7 @@ search_used=1
         "has_user" : "src",
         "prt"      : ["udp 82"],
         "service"  : "Test7",
-        "src"      : ["User"]
+        "src"      : []
     },
     {
         "action"   : "permit",
@@ -1123,7 +1117,7 @@ search_used=1
         "has_user" : "src",
         "prt"      : ["udp 82"],
         "service"  : "Test8",
-        "src"      : ["User"]
+        "src"      : []
     }
 ]
 =END=

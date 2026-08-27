@@ -14,11 +14,55 @@ Versionsnummer und Datum.
 - Schraubenschlüssel-Symbol für die Administration in der Hauptnavigation.
 - Tabellenbasierte Administration mit Bereichszählern, Suche und fester Aktionsleiste.
 - SMTP-Konfiguration über policyweb.conf und Umgebungsvariablen.
+- LDAP-Anmeldung per LDAPS und manueller Preview-/Confirm-Benutzersync.
+- Aktivierbarer und planbarer Wartungsmodus; währenddessen bleibt nur der
+  Administratorzugang offen.
+- Serverseitige Policy-Namen mit Mandanten-, Kontext-, Zonen-, Service- und
+  stabilen Regelmetadaten.
+- Verbindliches Staging mit Validation, Risikoanalyse und vollständiger
+  Deployment-Command-Vorschau.
+- Vier-Augen-Freigabe mit Reviewer-/Deployer-Rollen, Ablehnung,
+  Optimistic Locking und Audit-Protokoll.
+- Strukturierter Reviewer-Diff mit vollständigen Vorher-/Nachher-Dokumenten,
+  feldgenauen JSON-Pfaden und allen serverseitigen Naming-Ableitungen.
+- FortiOS-7.4.x-/7.4.12-Deployment mit Versions-Preflight, vollständiger
+  CMDB-Paginierung, Policy-Anker, schrittweiser Verifikation,
+  sicherheitsgerichtetem Fehler-Rollback und Drift-Prüfung.
+- Where-used-Prüfung, Lifecycle-Befunde und Rollback als neue prüfpflichtige
+  Revision.
+- Kopieren und Verschieben von Regeln zwischen Diensten.
 
 ### Geändert
 
 - Die Willkommensseite zeigt ausschließlich das Changelog.
 - Regeln sind pro Dienst einklappbar und werden in einer übersichtlichen Untertabelle bearbeitet.
+- LDAP-Benutzer können lokal nur in E-Mail-Adresse und Policy-Rolle geändert
+  werden; ihre Verzeichnisidentität bleibt serverseitig geschützt.
+- Rollen- und Wartungsentscheidungen verwenden ausschließlich die zuletzt
+  veröffentlichte Policy, nie unveröffentlichte Draft-Rechte.
+- Zielkontext und automatisches Naming sind für jede veröffentlichte Regel
+  verbindlich; Ablaufdaten sind ausschließlich für Regeln der Gruppe `TMP`
+  zulässig.
+- Lokale Kennwörter werden mit Argon2id gespeichert; bestehende SSHA-Hashes
+  werden nach erfolgreicher Anmeldung migriert.
+
+### Behoben
+
+- Dienstregeldetails zeigen wieder die tatsächlich gespeicherten Quellen und
+  Ziele; NAT-Darstellung mutiert keine gecachten Objekte mehr.
+- Session-Fixation, unsichere Benutzerdateipfade und implizite Kontoerstellung
+  wurden verhindert.
+- Die Policy-Validierung verhindert Konfigurationen ohne einen aktiven, einem
+  Verantwortungsbereich zugeordneten Policy-Administrator.
+- FortiOS-Deployments akzeptieren keine unvollständigen CMDB-Antworten und
+  führen bei nicht eindeutig abgleichbarem Gerätezustand keine teilweise
+  Rollback-Kompensation aus.
+
+### Entfernt
+
+- Die Funktion „User expandieren“ einschließlich UI und Backend-Unterstützung.
+- Der alte `/admin/diff`-Bypass; Revisionen müssen über das vollständige
+  Staging erzeugt werden.
 
 ## 1.0.0 - 2026-08-19
 

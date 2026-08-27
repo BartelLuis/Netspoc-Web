@@ -12,16 +12,22 @@ import (
 
 func validEditablePolicy() *editablePolicy {
 	return &editablePolicy{
-		Name:   "office-policy",
-		Users:  []editableUser{{Email: "admin@example.net", Password: "secret"}},
-		Owners: []editableOwner{{Name: "network-team", Admins: []string{"admin@example.net"}}},
+		Name:           "office-policy",
+		Tenants:        []tenant{{MKZ: "M120", Name: "Mandant 120", Active: true}},
+		TargetContexts: []targetContext{{Name: "prod", ContextType: "dedicated", AssignedMKZ: "M120"}},
+		Users:          []editableUser{{Email: "admin@example.net"}},
+		Owners:         []editableOwner{{Name: "network-team", Admins: []string{"admin@example.net"}}},
 		Networks: []editableNetwork{{
-			Name: "office", CIDR: "10.20.0.0/16", Owner: "network-team",
-			Hosts: []editableHost{{Name: "server", IP: "10.20.0.10", Owner: "network-team"}},
+			Name: "office", CIDR: "10.20.0.0/16", Owner: "network-team", Zone: "GDMZ",
+			Hosts: []editableHost{{Name: "server", IP: "10.20.0.10", Owner: "network-team", Zone: "IDMZ"}},
 		}},
 		Services: []editableService{{
 			Name: "web", Owners: []string{"network-team"},
-			Rules: []editableRule{{Action: "permit", Sources: []string{"network:office"}, Destinations: []string{"host:server"}, Protocols: []string{"tcp 443"}}},
+			Rules: []editableRule{{
+				Action: "permit", Sources: []string{"network:office"}, Destinations: []string{"host:server"}, Protocols: []string{"tcp 443"},
+				RuleGroup: "SRV", Owner: "network-team", ChangeReference: "CHG-1", ReviewDate: "2030-12-31", Purpose: "Web access",
+				StableRuleID: "123e4567-e89b-42d3-a456-426614174000", TargetContext: "prod",
+			}},
 		}},
 	}
 }
@@ -37,13 +43,37 @@ func TestValidateEditablePolicy(t *testing.T) {
 	}
 }
 
+func TestValidateEditablePolicyRejectsInvalidDirectoryIdentityMetadata(t *testing.T) {
+	tests := map[string][]editableUser{
+		"LDAP without directory ID": {{Email: "ldap@example.net", Role: "viewer", Source: "ldap", Active: true}},
+		"duplicate LDAP directory ID": {
+			{Email: "ldap-a@example.net", Role: "viewer", Source: "ldap", DirectoryID: "directory-1", Active: true},
+			{Email: "ldap-b@example.net", Role: "viewer", Source: "ldap", DirectoryID: "directory-1", Active: true},
+		},
+		"local user with directory ID":     {{Email: "local@example.net", Role: "viewer", Source: "local", DirectoryID: "directory-1"}},
+		"directory ID without LDAP source": {{Email: "missing-source@example.net", Role: "viewer", DirectoryID: "directory-1"}},
+		"unsupported source":               {{Email: "other@example.net", Role: "viewer", Source: "other"}},
+	}
+	for name, extraUsers := range tests {
+		t.Run(name, func(t *testing.T) {
+			p := validEditablePolicy()
+			p.Users = append(p.Users, extraUsers...)
+			if err := validateEditablePolicy(p); err == nil {
+				t.Fatal("invalid directory identity metadata was accepted")
+			}
+		})
+	}
+}
+
 func TestHostNameIsDerivedFromIPAddress(t *testing.T) {
 	p := validEditablePolicy()
 	p.Networks[0].Hosts[0].Name = ""
 	p.Networks[0].Hosts[0].IP = "172.25.26.1"
 	p.Networks[0].CIDR = "172.25.26.0/24"
 	p.Services[0].Rules[0].Destinations = []string{"host:ip-172-25-26-1"}
-	if err := validateEditablePolicy(p); err != nil { t.Fatal(err) }
+	if err := validateEditablePolicy(p); err != nil {
+		t.Fatal(err)
+	}
 	if got := p.Networks[0].Hosts[0].Name; got != "ip-172-25-26-1" {
 		t.Fatalf("generated host name = %q", got)
 	}
@@ -64,31 +94,91 @@ func TestOwnerHierarchyAndRoles(t *testing.T) {
 	p.Users = append(p.Users, editableUser{Email: "reader@example.net", Role: "viewer"})
 	p.Owners = append(p.Owners, editableOwner{Name: "branch", Parent: "network-team", Users: []string{"reader@example.net"}})
 	p.Networks[0].Hosts[0].Owner = "branch"
-	if err := validateEditablePolicy(p); err != nil { t.Fatal(err) }
+	if err := validateEditablePolicy(p); err != nil {
+		t.Fatal(err)
+	}
 	p.Owners[0].Parent = "branch"
-	if err := validateEditablePolicy(p); err == nil { t.Fatal("cyclic owner hierarchy was accepted") }
+	if err := validateEditablePolicy(p); err == nil {
+		t.Fatal("cyclic owner hierarchy was accepted")
+	}
 }
 
 func TestPolicyDiffApprovalChangesWithBase(t *testing.T) {
 	next := validEditablePolicy()
 	first, err := approvalHash("p1", nil, next)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	base := validEditablePolicy()
 	base.Name = "older"
 	second, err := approvalHash("p1", base, next)
-	if err != nil { t.Fatal(err) }
-	if first == second { t.Fatal("approval does not include the published base policy") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("approval does not include the published base policy")
+	}
 	third, err := approvalHash("p2", nil, next)
-	if err != nil { t.Fatal(err) }
-	if first == third { t.Fatal("approval does not include the diff policy ID") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == third {
+		t.Fatal("approval does not include the diff policy ID")
+	}
 }
 
 func TestEmptyPolicyDiffIsAnEmptyArray(t *testing.T) {
 	p := validEditablePolicy()
 	changes := diffPolicies(p, p)
-	if changes == nil || len(changes) != 0 { t.Fatalf("expected empty non-nil diff, got %#v", changes) }
-	data, err := json.Marshal(changes); if err != nil { t.Fatal(err) }
-	if string(data) != "[]" { t.Fatalf("empty diff encoded as %s", data) }
+	if changes == nil || len(changes) != 0 {
+		t.Fatalf("expected empty non-nil diff, got %#v", changes)
+	}
+	data, err := json.Marshal(changes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "[]" {
+		t.Fatalf("empty diff encoded as %s", data)
+	}
+}
+
+func TestPolicyDiffIncludesNamingConfigurationAndDerivedRuleDetails(t *testing.T) {
+	old := validEditablePolicy()
+	if err := validateEditablePolicy(old); err != nil {
+		t.Fatal(err)
+	}
+	next := cloneEditablePolicy(t, old)
+	next.Tenants[0].Name = "Mandant 120 neu"
+	next.TargetContexts[0].AssignedMKZ = "M121"
+	next.NamingCatalog.Version = "fortigate-v2"
+	next.Services[0].Description = "review-visible service change"
+	next.Services[0].Rules[0].PolicyName = "SRV_GDMZ_IDMZ_h_in_ABCDE"
+	next.Services[0].Rules[0].PolicyComment = "review-visible derived comment"
+	next.Services[0].Rules[0].NamingVersion = "fortigate-v2"
+
+	changes := diffPolicies(old, next)
+	for _, kind := range []string{"tenant", "target_context", "naming_catalog", "service"} {
+		if !slices.ContainsFunc(changes, func(change policyChange) bool {
+			return change.Type == kind && change.Change == "changed" && change.Before != nil && change.After != nil
+		}) {
+			t.Fatalf("%s before/after change missing from diff: %#v", kind, changes)
+		}
+	}
+	serviceChangeIndex := slices.IndexFunc(changes, func(change policyChange) bool { return change.Type == "service" })
+	if serviceChangeIndex < 0 {
+		t.Fatal("service change missing")
+	}
+	serviceChange := changes[serviceChangeIndex]
+	for _, path := range []string{"/services/web/rules/0/policy_name", "/services/web/rules/0/policy_comment", "/services/web/rules/0/naming_version"} {
+		if !slices.ContainsFunc(serviceChange.FieldChanges, func(field policyFieldChange) bool { return field.Path == path }) {
+			t.Fatalf("derived field path %q is not reviewer-visible: %#v", path, serviceChange)
+		}
+	}
+	before, beforeOK := serviceChange.Before.(map[string]any)
+	after, afterOK := serviceChange.After.(map[string]any)
+	if !beforeOK || !afterOK || before["rules"] == nil || after["rules"] == nil {
+		t.Fatalf("service before/after is not structured JSON: %#v", serviceChange)
+	}
 }
 
 func TestPolicyRoles(t *testing.T) {
@@ -105,6 +195,22 @@ func TestPolicyRoles(t *testing.T) {
 	}
 }
 
+func TestInactiveLDAPAccountsAreExcludedFromLegacyExports(t *testing.T) {
+	p := &editablePolicy{Users: []editableUser{
+		{Email: "inactive@example.net", Source: "ldap", Active: false},
+		{Email: "active@example.net", Source: "ldap", Active: true},
+		{Email: "local@example.net", Source: "", Active: false},
+	}}
+	inactive := inactiveLDAPAccountEmails(p)
+	got := withoutInactiveLDAPAccounts([]string{
+		"inactive@example.net", "active@example.net", "local@example.net", "guest",
+	}, inactive)
+	want := []string{"active@example.net", "local@example.net", "guest"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("filtered legacy identities = %#v, want %#v", got, want)
+	}
+}
+
 func TestPublishEditablePolicy(t *testing.T) {
 	root := t.TempDir()
 	s := &state{
@@ -113,6 +219,11 @@ func TestPublishEditablePolicy(t *testing.T) {
 	}
 	if err := s.publishPolicy(validEditablePolicy()); err != nil {
 		t.Fatal(err)
+	}
+	if userFile, err := safeUserFile(filepath.Join(root, "users"), "admin@example.net"); err != nil {
+		t.Fatal(err)
+	} else if _, err := os.Stat(userFile); !os.IsNotExist(err) {
+		t.Fatalf("policy publication touched local credentials: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "policies", "current", "email"))
 	if err != nil {
@@ -141,31 +252,63 @@ func TestPublishedPoliciesAppearInHistory(t *testing.T) {
 	root := t.TempDir()
 	s := &state{config: &config{NetspocData: filepath.Join(root, "policies"), UserDir: filepath.Join(root, "users")}, cache: newCache(filepath.Join(root, "policies"), 8)}
 	p := validEditablePolicy()
-	if err := s.publishPolicy(p); err != nil { t.Fatal(err) }
+	if err := s.publishPolicy(p); err != nil {
+		t.Fatal(err)
+	}
 	p.Services[0].Description = "second"
-	if err := s.publishPolicy(p); err != nil { t.Fatal(err) }
+	if err := s.publishPolicy(p); err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest("GET", "/?active_owner=network-team", nil)
-	history, err := s.generateHistory(req); if err != nil { t.Fatal(err) }
-	if len(history) != 2 { t.Fatalf("published policy history has %d entries: %#v", len(history), history) }
-	if history[0]["policy"] == history[1]["policy"] { t.Fatalf("policy IDs are not unique: %#v", history) }
+	history, err := s.generateHistory(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("published policy history has %d entries: %#v", len(history), history)
+	}
+	if history[0]["policy"] == history[1]["policy"] {
+		t.Fatalf("policy IDs are not unique: %#v", history)
+	}
 }
 
 func TestPublishOwnerInheritanceAndHostOwnership(t *testing.T) {
 	root := t.TempDir()
 	p := validEditablePolicy()
-	p.Users = append(p.Users, editableUser{Email: "child@example.net", Password: "secret", Role: "viewer"})
+	p.Users = append(p.Users, editableUser{Email: "child@example.net", Role: "viewer"})
 	p.Owners = append(p.Owners, editableOwner{Name: "child", Parent: "network-team", Users: []string{"child@example.net"}})
 	p.Networks[0].Hosts[0].Owner = "child"
 	s := &state{config: &config{NetspocData: filepath.Join(root, "policies"), UserDir: filepath.Join(root, "users")}, cache: newCache(filepath.Join(root, "policies"), 8)}
-	if err := validateEditablePolicy(p); err != nil { t.Fatal(err) }
-	if err := s.publishPolicy(p); err != nil { t.Fatal(err) }
+	if err := validateEditablePolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.publishPolicy(p); err != nil {
+		t.Fatal(err)
+	}
 	version := s.currentPolicy()
-	data, err := os.ReadFile(filepath.Join(root, "policies", version, "email")); if err != nil { t.Fatal(err) }
-	var access map[string][]string; if err := json.Unmarshal(data, &access); err != nil { t.Fatal(err) }
-	if !slices.Contains(access["admin@example.net"], "child") { t.Fatalf("parent admin lacks child access: %#v", access) }
-	data, err = os.ReadFile(filepath.Join(root, "policies", version, "owner", "child", "assets")); if err != nil { t.Fatal(err) }
-	var assets struct { Anys map[string]struct { Networks map[string][]string `json:"networks"` } `json:"anys"` }
-	if err := json.Unmarshal(data, &assets); err != nil { t.Fatal(err) }
+	data, err := os.ReadFile(filepath.Join(root, "policies", version, "email"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var access map[string][]string
+	if err := json.Unmarshal(data, &access); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(access["admin@example.net"], "child") {
+		t.Fatalf("parent admin lacks child access: %#v", access)
+	}
+	data, err = os.ReadFile(filepath.Join(root, "policies", version, "owner", "child", "assets"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assets struct {
+		Anys map[string]struct {
+			Networks map[string][]string `json:"networks"`
+		} `json:"anys"`
+	}
+	if err := json.Unmarshal(data, &assets); err != nil {
+		t.Fatal(err)
+	}
 	if children := assets.Anys["all"].Networks["network:office"]; !slices.Contains(children, "host:server") {
 		t.Fatalf("child owner cannot see its host: %#v", assets)
 	}

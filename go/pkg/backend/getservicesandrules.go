@@ -8,7 +8,6 @@ func (s *state) getServicesAndRules(w http.ResponseWriter, r *http.Request) {
 	if !s.requireOwnerAccess(w, r, r.FormValue("active_owner")) {
 		return
 	}
-	expandUsers := r.FormValue("expand_users")
 	serviceRecords := s.generateServiceList(r)
 
 	// If no services are found, return an empty result.
@@ -26,14 +25,6 @@ func (s *state) getServicesAndRules(w http.ResponseWriter, r *http.Request) {
 		for _, rule := range rules {
 			// The service name on the rule is needed for grouping in the frontend.
 			rule["service"] = service
-			if expandUsers != "1" {
-				if rule["has_user"] == "src" || rule["has_user"] == "both" {
-					rule["src"] = []string{"User"}
-				}
-				if rule["has_user"] == "dst" || rule["has_user"] == "both" {
-					rule["dst"] = []string{"User"}
-				}
-			}
 			result = append(result, rule)
 		}
 	}

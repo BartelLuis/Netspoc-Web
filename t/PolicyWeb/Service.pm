@@ -202,7 +202,6 @@ sub test_print_all_services {
     subtest "test print all services" => sub {
         plan tests => 8;
 
-        my $cb_expand_users = $driver->find_element('cb_expand_users');
         my $cb_show_names   = $driver->find_element('cb_show_names');
 
         my $pnl_services = $driver->find_element('pnl_services');
@@ -222,9 +221,8 @@ sub test_print_all_services {
             'xpath'
         );
 
-        #my $regex = 'permit\sUser\s(network|any|host):.+\s(udp|tcp)\s\d+';
         my $regex =
-'permit\sUser\s(User|(\d+\.\d+\.\d+\.\d+(\/\d+\.\d+\.\d+\.\d+)?))\s(udp|tcp)\s\d+';
+'permit\s+(?:(?:\d{1,3}\.){3}\d{1,3}(?:\/\S+)?\s+)?(?:udp|tcp)\s+\d+';
 
         ok( check_all_services( \@all_services, \@services, $regex ),
             "all services contains correct data" );
@@ -234,7 +232,6 @@ sub test_print_all_services {
             './/*[contains(@class, "x-tool-after-title")]', 'xpath' )->click;
 
         # print_all_services should now conain diffrent data after:
-        $cb_expand_users->click;
         $cb_show_names->click;
 
         $driver->find_element('btn_services_print_all')->click;
@@ -246,7 +243,8 @@ sub test_print_all_services {
             'xpath'
         );
 
-        $regex = 'permit\s((network|any|host|interface):.+\s)+(udp|tcp)\s\d+';
+        $regex =
+'permit\s+(?:(?:network|any|host|interface|fqdn):\S+\s+)*(?:udp|tcp)\s+\d+';
 
         ok(
             check_all_services( \@all_services, \@services, $regex ),
@@ -293,7 +291,6 @@ sub test_print_all_services {
             './/*[contains(@class, "x-tool-after-title")]', 'xpath' )->click;
 
         # back to normal
-        $cb_expand_users->click;
         $cb_show_names->click;
     };
 
@@ -372,8 +369,6 @@ sub service_details {
 
         $driver->select_by_key( \@service_grid, 1, 0, "Test4" );
 
-        ok( $driver->find_child_element( $rp, 'cb_expand_users' ),
-            "found checkbox:\texpand user" );
         ok( $driver->find_child_element( $rp, 'cb_show_names' ),
             "found checkbox:\tshow names" );
         ok( $driver->find_child_element( $rp, 'cb_filter_search' ),
@@ -450,24 +445,15 @@ sub service_details {
         # check syntax in grid
         my @regex = (
             'permit',
-            'User',
+            '^$',
 '(2(0..5)(0..5)|1\d\d|\d\d|\d)\.(2(0..5)(0..5)|1\d\d|\d\d|\d)\.(2(0..5)(0..5)|1\d\d|\d\d|\d)\.(2(0..5)(0..5)|1\d\d|\d\d|\d)',
             '(udp|tcp)\s\d+'
         );
         $is_ok = 1;
         $is_ok = $driver->check_syntax_grid( \@service_rules, 5, 0, \@regex );
 
-        $driver->find_child_element( $rp, 'cb_expand_users' )->click;
-
-        #regex matches anschauen
-        $regex[1] =
-'((2(0..5)(0..5)|1\d\d|\d\d|\d)\.(2(0..5)(0..5)|1\d\d|\d\d|\d)\.(2(0..5)(0..5)|1\d\d|\d\d|\d)\.(2(0..5)(0..5)|1\d\d|\d\d|\d)(\-\/(2(0..5)(0..5)|1\d\d|\d\d|\d)\.(2(0..5)(0..5)|1\d\d|\d\d|\d)\.(2(0..5)(0..5)|1\d\d|\d\d|\d)\.(2(0..5)(0..5)|1\d\d|\d\d|\d))?)';
-        @service_rules =
-          $driver->find_child_elements( $grid, './/td', 'xpath' );
-        $is_ok &= $driver->check_syntax_grid( \@service_rules, 5, 0, \@regex );
-
         $driver->find_child_element( $rp, 'cb_show_names' )->click;
-        $regex[1] = '(any:.+|network:.+|interface:.+|host:.+)';
+        $regex[1] = '^$';
         $regex[2] = '(any:.+|network:.+|interface:.+|host:.+)';
         @service_rules =
           $driver->find_child_elements( $grid, './/td', 'xpath' );
@@ -551,7 +537,6 @@ sub test_print_details {
 
         sleep 5;    # some infotext, which does not disapear earlier
 
-        $driver->find_element('cb_expand_users')->click;
         $driver->find_element('cb_show_names')->click;
 
         @grid_rules =
@@ -582,7 +567,6 @@ sub test_print_details {
         $handles = $driver->get_window_handles;
         $driver->switch_to_window( $handles->[0] );
 
-        $driver->find_element('cb_expand_users')->click;
         $driver->find_element('cb_show_names')->click;
     };
 }
