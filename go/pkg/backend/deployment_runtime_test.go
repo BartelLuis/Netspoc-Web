@@ -1921,6 +1921,8 @@ func TestPublishFinalizeFailureRestoresDraftCurrentAndLock(t *testing.T) {
 	if err := s.saveDraft(oldPolicy); err != nil {
 		t.Fatal(err)
 	}
+	expectedDraft := cloneEditablePolicy(t, oldPolicy)
+	normalizeEditablePolicy(expectedDraft)
 	if err := os.Symlink("p-old", filepath.Join(dataDir, "current")); err != nil {
 		t.Fatal(err)
 	}
@@ -1944,7 +1946,7 @@ func TestPublishFinalizeFailureRestoresDraftCurrentAndLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !samePolicyDocument(restoredDraft, oldPolicy) {
+	if !samePolicyDocument(restoredDraft, expectedDraft) {
 		t.Fatal("draft was not restored after publication finalization failure")
 	}
 	if _, err := s.loadPublication("p-finalize-fails"); err == nil {
