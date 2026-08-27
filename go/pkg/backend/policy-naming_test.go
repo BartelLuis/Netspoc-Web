@@ -19,6 +19,7 @@ func namingTestPolicy(contextType string) *editablePolicy {
 			StableRuleID: "123e4567-e89b-42d3-a456-426614174000", TenantMKZ: "M120", TargetContext: "prod",
 		}}}},
 	}
+
 	normalizeCatalog(&p.NamingCatalog)
 	return p
 }
