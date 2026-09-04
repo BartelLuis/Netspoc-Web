@@ -1637,14 +1637,38 @@ func lookupFortiGateObject(ctx context.Context, client *http.Client, target Fort
 }
 
 func listFortiGateObjects(ctx context.Context, client *http.Client, target FortinetTarget, path string, query url.Values) ([]fortiGateObject, error) {
-	const pageSize = 500
+	return listFortiGateObjectsWithPageSize(ctx, client, target, path, query, 500)
+}
+
+func listFortiGateObjectsWithPageSize(ctx context.Context, client *http.Client, target FortinetTarget, path string, query url.Values, pageSize int) ([]fortiGateObject, error) {
+	return listFortiGateObjectsPaged(ctx, client, target, path, query, pageSize, false)
+}
+
+// listFortiGateObjectsCompleteSnapshot is intentionally stricter than the
+// general object reader. Inventory reconciliation may infer deletions, so an
+// unfiltered snapshot is accepted only when FortiOS proves that every physical
+// table row was returned. Sparse filtered/RBAC listings remain supported by
+// listFortiGateObjectsWithPageSize, but can never drive deletion inference.
+func listFortiGateObjectsCompleteSnapshot(ctx context.Context, client *http.Client, target FortinetTarget, path string, query url.Values, pageSize int) ([]fortiGateObject, error) {
+	return listFortiGateObjectsPaged(ctx, client, target, path, query, pageSize, true)
+}
+
+func listFortiGateObjectsPaged(ctx context.Context, client *http.Client, target FortinetTarget, path string, query url.Values, pageSize int, requireComplete bool) ([]fortiGateObject, error) {
 	const maxRows = 250000
+	if pageSize < 1 || pageSize > maxRows {
+		return nil, errors.New("FortiGate page size is outside the safety limits")
+	}
 	result := []fortiGateObject{}
 	seenMKeys := map[string]bool{}
 	start := 0
 	revision := ""
 	tableSize := -1
 	sizedResponse := false
+	matchedCountPresent := false
+	globalMatchedCount := -1
+	globalMatchedCountPossible := true
+	pageMatchedCountTotal := 0
+	pageMatchedCountPossible := true
 	policyKind := strings.HasSuffix(path, "/policy")
 	for page := 0; page < 10000; page++ {
 		pageQuery := url.Values{}
@@ -1690,6 +1714,29 @@ func listFortiGateObjects(ctx context.Context, client *http.Client, target Forti
 			}
 			tableSize = pageSizeValue
 		}
+		if requireComplete {
+			if !sizePresent {
+				return nil, errors.New("FortiGate object response has no size metadata for a complete snapshot")
+			}
+			rawMatchedCount, present := body["matched_count"]
+			if !present {
+				return nil, errors.New("FortiGate object response has no matched_count for a complete snapshot")
+			}
+			matchedCount, matchedErr := strconv.Atoi(strings.TrimSpace(scalarString(rawMatchedCount)))
+			if matchedErr != nil || matchedCount < 0 || matchedCount > maxRows {
+				return nil, errors.New("FortiGate object response has an invalid matched_count")
+			}
+			matchedCountPresent = true
+			if globalMatchedCount < 0 {
+				globalMatchedCount = matchedCount
+			} else if matchedCount != globalMatchedCount {
+				globalMatchedCountPossible = false
+			}
+			if matchedCount != len(values) {
+				pageMatchedCountPossible = false
+			}
+			pageMatchedCountTotal += matchedCount
+		}
 		for _, value := range values {
 			mkey := firstScalarString(value, "name")
 			if policyKind {
@@ -1712,10 +1759,10 @@ func listFortiGateObjects(ctx context.Context, client *http.Client, target Forti
 				return nil, errors.New("FortiGate object response contains more rows than its reported size")
 			}
 			if len(result) == tableSize {
-				return result, nil
+				return validateCompleteFortiGateObjectSnapshot(result, tableSize, matchedCountPresent, globalMatchedCountPossible, globalMatchedCount, pageMatchedCountPossible, pageMatchedCountTotal, requireComplete)
 			}
 			if start+pageSize >= tableSize {
-				return result, nil
+				return validateCompleteFortiGateObjectSnapshot(result, tableSize, matchedCountPresent, globalMatchedCountPossible, globalMatchedCount, pageMatchedCountPossible, pageMatchedCountTotal, requireComplete)
 			}
 			if revision == "" {
 				return nil, errors.New("FortiGate paginated response has no stable revision")
@@ -1741,6 +1788,20 @@ func listFortiGateObjects(ctx context.Context, client *http.Client, target Forti
 		start = nextIndex + 1
 	}
 	return nil, errors.New("FortiGate pagination exceeded the safety page limit")
+}
+
+func validateCompleteFortiGateObjectSnapshot(result []fortiGateObject, tableSize int, matchedCountPresent, globalMatchedCountPossible bool, globalMatchedCount int, pageMatchedCountPossible bool, pageMatchedCountTotal int, required bool) ([]fortiGateObject, error) {
+	if !required {
+		return result, nil
+	}
+	if tableSize < 0 || len(result) != tableSize {
+		return nil, fmt.Errorf("FortiGate object snapshot is incomplete (size=%d, results=%d)", tableSize, len(result))
+	}
+	matchedCountProvesCompleteness := matchedCountPresent && ((globalMatchedCountPossible && globalMatchedCount == len(result)) || (pageMatchedCountPossible && pageMatchedCountTotal == len(result)))
+	if !matchedCountProvesCompleteness {
+		return nil, fmt.Errorf("FortiGate object snapshot has inconsistent matched_count metadata (results=%d)", len(result))
+	}
+	return result, nil
 }
 
 func fortiGateTruthy(value any) bool {

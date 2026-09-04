@@ -177,36 +177,37 @@ func (t FortinetTarget) apiToken() (string, error) {
 }
 
 type config struct {
-	NetspocData         string           `json:"netspoc_data"`
-	NoreplyAddress      string           `json:"noreply_address"`
-	SessionDir          string           `json:"session_dir"`
-	UserDir             string           `json:"user_dir"`
-	SendmailCommand     string           `json:"sendmail_command"`
-	MailTransport       string           `json:"mail_transport"`
-	SMTPHost            string           `json:"smtp_host"`
-	SMTPPort            int              `json:"smtp_port"`
-	SMTPUsernameEnv     string           `json:"smtp_username_env"`
-	SMTPPasswordEnv     string           `json:"smtp_password_env"`
-	MailTemplate        string           `json:"mail_template"`
-	HTMLTemplate        string           `json:"html_template"`
-	PublicBaseURL       string           `json:"public_base_url,omitempty"`
-	ExpireLoggedIn      int              `json:"expire_logged_in"`
-	BusinessUnits       []string         `json:"business_units"`
-	AboutInfoTemplate   string           `json:"about_info_template"`
-	FortinetTargets     []FortinetTarget `json:"fortinet_targets,omitempty"`
-	FortiGateReadOnly   bool             `json:"-"`
-	MaintenanceMode     bool             `json:"maintenance_mode,omitempty"`
-	MaintenanceMessage  string           `json:"maintenance_message,omitempty"`
-	LdapURI             string           `json:"ldap_uri,omitempty"`
-	LdapDNTemplate      string           `json:"ldap_dn_template,omitempty"`
-	LdapBaseDN          string           `json:"ldap_base_dn,omitempty"`
-	LdapFilterTemplate  string           `json:"ldap_filter_template,omitempty"`
-	LdapSyncFilter      string           `json:"ldap_sync_filter,omitempty"`
-	LdapUserAttr        string           `json:"ldap_user_attr,omitempty"`
-	LdapEmailAttr       string           `json:"ldap_email_attr,omitempty"`
-	LdapIDAttr          string           `json:"ldap_id_attr,omitempty"`
-	LdapBindDNEnv       string           `json:"ldap_bind_dn_env,omitempty"`
-	LdapBindPasswordEnv string           `json:"ldap_bind_password_env,omitempty"`
+	NetspocData                 string           `json:"netspoc_data"`
+	NoreplyAddress              string           `json:"noreply_address"`
+	SessionDir                  string           `json:"session_dir"`
+	UserDir                     string           `json:"user_dir"`
+	SendmailCommand             string           `json:"sendmail_command"`
+	MailTransport               string           `json:"mail_transport"`
+	SMTPHost                    string           `json:"smtp_host"`
+	SMTPPort                    int              `json:"smtp_port"`
+	SMTPUsernameEnv             string           `json:"smtp_username_env"`
+	SMTPPasswordEnv             string           `json:"smtp_password_env"`
+	MailTemplate                string           `json:"mail_template"`
+	HTMLTemplate                string           `json:"html_template"`
+	PublicBaseURL               string           `json:"public_base_url,omitempty"`
+	ExpireLoggedIn              int              `json:"expire_logged_in"`
+	BusinessUnits               []string         `json:"business_units"`
+	AboutInfoTemplate           string           `json:"about_info_template"`
+	FortinetTargets             []FortinetTarget `json:"fortinet_targets,omitempty"`
+	FortiGateReadOnly           bool             `json:"-"`
+	FortiGatePolicyScanInterval time.Duration    `json:"-"`
+	MaintenanceMode             bool             `json:"maintenance_mode,omitempty"`
+	MaintenanceMessage          string           `json:"maintenance_message,omitempty"`
+	LdapURI                     string           `json:"ldap_uri,omitempty"`
+	LdapDNTemplate              string           `json:"ldap_dn_template,omitempty"`
+	LdapBaseDN                  string           `json:"ldap_base_dn,omitempty"`
+	LdapFilterTemplate          string           `json:"ldap_filter_template,omitempty"`
+	LdapSyncFilter              string           `json:"ldap_sync_filter,omitempty"`
+	LdapUserAttr                string           `json:"ldap_user_attr,omitempty"`
+	LdapEmailAttr               string           `json:"ldap_email_attr,omitempty"`
+	LdapIDAttr                  string           `json:"ldap_id_attr,omitempty"`
+	LdapBindDNEnv               string           `json:"ldap_bind_dn_env,omitempty"`
+	LdapBindPasswordEnv         string           `json:"ldap_bind_password_env,omitempty"`
 }
 
 func LoadConfig() *config {
@@ -241,6 +242,11 @@ func LoadConfig() *config {
 		abort("Invalid FortiGate read-only setting: %v", err)
 	}
 	c.FortiGateReadOnly = fortiGateReadOnly
+	fortiGatePolicyScanInterval, err := fortiGatePolicyScanIntervalSetting()
+	if err != nil {
+		abort("Invalid FortiGate policy scan interval: %v", err)
+	}
+	c.FortiGatePolicyScanInterval = fortiGatePolicyScanInterval
 
 	// Override with config file
 	if err := json.Unmarshal(data, &c); err != nil {
@@ -368,6 +374,8 @@ func LoadConfig() *config {
 
 const fortiGateReadOnlyEnv = "POLICYWEB_FORTIGATE_READ_ONLY"
 
+const fortiGatePolicyScanIntervalEnv = "POLICYWEB_FORTIGATE_POLICY_SCAN_INTERVAL"
+
 func fortiGateReadOnlySetting() (bool, error) {
 	value := strings.TrimSpace(os.Getenv(fortiGateReadOnlyEnv))
 	switch strings.ToLower(value) {
@@ -380,6 +388,18 @@ func fortiGateReadOnlySetting() (bool, error) {
 	default:
 		return false, fmt.Errorf("%s must be true or false", fortiGateReadOnlyEnv)
 	}
+}
+
+func fortiGatePolicyScanIntervalSetting() (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(fortiGatePolicyScanIntervalEnv))
+	if value == "" || value == "0" {
+		return 0, nil
+	}
+	interval, err := time.ParseDuration(value)
+	if err != nil || interval < time.Second || interval > 24*time.Hour {
+		return 0, fmt.Errorf("%s must be 0 or a duration between 1s and 24h", fortiGatePolicyScanIntervalEnv)
+	}
+	return interval, nil
 }
 
 // normalizedPublicBaseURL validates the externally visible origin used in

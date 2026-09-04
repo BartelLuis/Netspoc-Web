@@ -16,7 +16,7 @@
     .intro p { margin:3px 0 0; color:#526574 }
     .form-grid { display:grid; grid-template-columns:repeat(2,minmax(220px,1fr)) minmax(90px,.35fr) auto; gap:10px; align-items:end }
     label { display:flex; flex-direction:column; gap:.35rem; font-weight:600 }
-    input,textarea { width:100%; padding:.65rem; border:1px solid #9babb7; border-radius:4px; font:inherit }
+    input,textarea,select { width:100%; padding:.65rem; border:1px solid #9babb7; border-radius:4px; background:var(--pw-surface,#fff); color:var(--pw-text,#293b49); font:inherit }
     textarea { min-height:120px; resize:vertical; font-family:Consolas,monospace; font-size:12px }
     button,.button { border:1px solid #a9bfd3; border-radius:3px; padding:8px 12px; cursor:pointer; background:linear-gradient(#fff,#dce7f0); color:#234; text-decoration:none; white-space:nowrap }
     button.primary { border-color:#518fbd; background:linear-gradient(#dcefff,#9fc7e7); font-weight:600 }
@@ -33,7 +33,15 @@
     .management-table .actions { min-width:230px }
     .management-name { display:block }.management-detail { display:block; color:#526574; font-size:12px; margin-top:3px; overflow-wrap:anywhere }
     .management-badge { display:inline-block; border-radius:10px; background:#e6edf2; color:#39566a; padding:2px 7px; font-size:12px; font-weight:600 }
+    .management-badge.unknown { background:#fff0c7; color:#765315 }
+    .management-badge.assigned { background:#dcefe3; color:#176b35 }
     .management-message { min-height:20px; margin:8px 0 }
+    .policy-inventory-row.unknown { background:var(--pw-warning-surface,#fffaf0) }
+    .policy-assignment-controls { display:flex; gap:7px; align-items:center; min-width:270px }
+    .policy-assignment-controls select { min-width:155px; padding:7px }
+    .policy-assignment-controls button { flex:0 0 auto }
+    .policy-scan-status { margin:8px 0 12px }
+    .policy-scan-status .device-status { min-height:82px }
     .check-row { display:flex; flex-direction:row; align-items:center; gap:8px; font-weight:normal }
     .check-row input { width:auto }
     dialog { width:min(680px,calc(100vw - 28px)); max-height:calc(100vh - 28px); overflow:auto; border:1px solid var(--pw-border,#9babb7); border-radius:5px; background:var(--pw-surface,#fff); color:var(--pw-text,#293b49); box-shadow:0 12px 36px rgba(0,0,0,.32); padding:0 }
@@ -53,16 +61,18 @@
     .chip { display:inline-block; border-radius:12px; background:#dceaf4; color:#285879; padding:4px 9px; font-weight:600 }
     .notice { border-left:4px solid #d49a2e; background:#fff8e8; padding:9px 11px; margin:10px 0; color:#654b18 }
     .error { color:#a01818 }.success { color:#176b35 }.muted { color:#526574 }
-    .routing-device { border:1px solid #b5c8d8; border-radius:4px; margin:10px 0; overflow:hidden }
-    .routing-device.affected { border-color:#5485a8; box-shadow:0 0 0 1px #8eb7d3 }
+    .routing-path { margin:12px 0 0; padding:0; list-style:none }
+    .routing-hop { border:1px solid #b5c8d8; border-radius:4px; overflow:hidden }
     .routing-head { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:9px 11px; background:#e9f0f5; border-bottom:1px solid #c9d5de }
-    .routing-body { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:12px; align-items:stretch; padding:11px }
+    .routing-body { display:grid; grid-template-columns:minmax(150px,.7fr) minmax(0,1.5fr); gap:16px; align-items:start; padding:11px }
     .route-side { min-width:0 }.route-side h3 { font-size:14px; color:#45667d }
-    .firewall-hop { align-self:center; min-width:150px; padding:12px; border-radius:4px; text-align:center; background:#315f80; color:#fff; font-weight:600 }
+    .hop-meta { color:#526574; font-size:12px; line-height:1.7 }.hop-meta strong { color:#314b5e }
+    .route-connector { display:flex; justify-content:center; align-items:center; gap:8px; min-height:42px; color:#315f80; font-weight:600 }
+    .route-connector .arrow { font-size:24px; line-height:1 }
     .route-list { margin:0; padding:0; list-style:none }.route-list li { padding:7px; border-bottom:1px solid #d9e2e9; overflow-wrap:anywhere }.route-list li:last-child { border-bottom:0 }
     .route-network { font-family:Consolas,monospace; font-weight:600 }.route-detail { display:block; margin-top:3px; color:#526574; font-size:12px }
     #message { min-height:20px; margin-top:8px }.empty { padding:24px; text-align:center; color:#70818e }
-    @media(max-width:820px){.form-grid{grid-template-columns:1fr}.routing-body{grid-template-columns:1fr}.firewall-hop{order:-1}.intro{flex-direction:column}}
+    @media(max-width:820px){.form-grid{grid-template-columns:1fr}.routing-body{grid-template-columns:1fr}.intro{flex-direction:column}}
   </style>
   <link rel="stylesheet" href="resources/css/theme-static.css">
 </head>
@@ -70,7 +80,7 @@
 <header><div><strong>Policy-Web</strong> · Geräte und Routing</div><div class="pw-header-actions"><button class="pw-theme-toggle" data-policyweb-theme-toggle type="button">Dark Mode</button><a class="button" href="/app.html">Übersicht</a></div></header>
 <main>
   <section class="card intro">
-    <div><h1>Geräte und Routing</h1><p>Aktuelle Routingtabellen der konfigurierten FortiGates auswerten und mögliche Firewalls zwischen Quell- und Zielnetz ermitteln.</p></div>
+    <div><h1>Geräte und Routing</h1><p>Den geordneten Weg vom VDOM mit dem Quellnetz bis zur Ziel-Firewall aus den aktuellen FortiGate-Routingdaten ermitteln.</p></div>
     <button id="refresh-devices" type="button">Gerätestatus aktualisieren</button>
   </section>
 
@@ -84,6 +94,22 @@
       <table class="management-table">
         <thead><tr><th>Gerät</th><th>VDOM</th><th>Herkunft</th><th>Zugang</th><th>Betrieb</th><th>Aktionen</th></tr></thead>
         <tbody id="fortigate-management-list"><tr><td colspan="6" class="empty">FortiGates werden geladen …</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="fortigate-policy-inventory" class="card" aria-labelledby="fortigate-policy-inventory-title" hidden>
+    <div class="section-head">
+      <div><h2 id="fortigate-policy-inventory-title">FortiGate-Policy-Inventar</h2><p>Erkannte FortiGate-Policies dauerhaft Diensten zuordnen. Nicht zugeordnete Policies bleiben virtuell &bdquo;Unbekannt&ldquo; und werden nicht in den Policy-Entwurf &uuml;bernommen.</p></div>
+      <div class="actions"><button id="refresh-fortigate-policies" type="button">Aktualisieren</button><button id="scan-fortigate-policies" class="primary" type="button">Jetzt scannen</button></div>
+    </div>
+    <div id="fortigate-policy-scanner-summary" class="summary" aria-live="polite"><span class="muted">Scannerstatus wird geladen &hellip;</span></div>
+    <div id="fortigate-policy-message" class="management-message" role="status" aria-live="polite"></div>
+    <div id="fortigate-policy-scan-status" class="status-grid policy-scan-status"><div class="empty">Scanstatus wird geladen &hellip;</div></div>
+    <div class="table-scroll">
+      <table class="management-table">
+        <thead><tr><th>Zuordnung</th><th>FortiGate</th><th>Policy</th><th>Zustand</th><th>Schnittstellen</th><th>Objekte und Dienste</th><th>Zuletzt gesehen</th><th>Zieldienst</th></tr></thead>
+        <tbody id="fortigate-policy-list"><tr><td colspan="8" class="empty">Policy-Inventar wird geladen &hellip;</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -107,9 +133,9 @@
   </section>
 
   <section id="routing-results" class="card" aria-labelledby="routing-results-title" hidden>
-    <h2 id="routing-results-title">Ergebnis</h2>
+    <h2 id="routing-results-title">Routing-Pfad</h2>
     <div id="routing-summary"></div>
-    <div id="routing-devices"></div>
+    <div id="routing-path"></div>
   </section>
 </main>
 
@@ -136,6 +162,7 @@ const embedded=new URLSearchParams(location.search).has('embedded');
 if(embedded){$('header').style.display='none';$('main').style.maxWidth='none';}
 const escapeHTML=value=>String(value??'').replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 let routeController=null,routeRequest=0,currentRole='',adminFortiGates=[],editingFortiGate=null;
+let fortiGatePolicyRecords=[],fortiGatePolicyServices=[],fortiGatePolicyBusy=false,fortiGatePolicyUnknownService='unbekannt';
 const canManageFortiGates=()=>currentRole==='admin'||currentRole==='developer';
 
 async function request(path,options={}){
@@ -224,13 +251,248 @@ async function loadAdminFortiGates(){
   }finally{addButton.disabled=false}
 }
 
+function fortiGatePolicyValues(value){
+  const values=Array.isArray(value)?value:(value===undefined||value===null||value===''?[]:[value]);
+  return values.map(item=>{
+    if(item&&typeof item==='object')return item.name??item.value??item.id??'';
+    return item;
+  }).map(item=>String(item??'').trim()).filter(Boolean);
+}
+
+function fortiGatePolicyList(value){
+  const values=fortiGatePolicyValues(value);
+  return values.length?values.join(', '):'\u2013';
+}
+
+function formatFortiGatePolicyTime(value){
+  if(value===undefined||value===null||String(value).trim()==='')return '\u2013';
+  const date=new Date(value);
+  return Number.isNaN(date.getTime())?String(value):date.toLocaleString('de-DE');
+}
+
+function formatFortiGateScanInterval(value){
+  if(value===undefined||value===null||value===''||value===0)return 'deaktiviert';
+  if(typeof value!=='number'||!Number.isFinite(value))return String(value);
+  let seconds=value>=1000000000?value/1000000000:value;
+  if(seconds%3600===0)return `${seconds/3600} h`;
+  if(seconds%60===0)return `${seconds/60} min`;
+  return `${seconds} s`;
+}
+
+function fortiGatePolicyAssignment(record){
+  const service=String(record?.assigned_service??'').trim(),source=String(record?.assignment_source??'').trim().toLowerCase();
+  if(service===''||source==='unknown')return '';
+  return source===''&&service.toLocaleLowerCase('de')===fortiGatePolicyUnknownService.toLocaleLowerCase('de')?'':service;
+}
+
+function normalizeFortiGatePolicyServices(services,records){
+  const names=new Set(fortiGatePolicyValues(services));
+  for(const record of records){
+    const assigned=fortiGatePolicyAssignment(record);
+    if(assigned)names.add(assigned);
+  }
+  return [...names].sort((left,right)=>left.localeCompare(right,'de',{sensitivity:'base',numeric:true}));
+}
+
+function normalizeFortiGatePolicyRecords(records){
+  const collator=new Intl.Collator('de',{sensitivity:'base',numeric:true});
+  return (Array.isArray(records)?records:[]).filter(record=>record&&record.id!==undefined&&record.id!==null).slice().sort((left,right)=>{
+    const leftUnknown=fortiGatePolicyAssignment(left)==='',rightUnknown=fortiGatePolicyAssignment(right)==='';
+    if(leftUnknown!==rightUnknown)return leftUnknown?-1:1;
+    for(const field of ['target_name','vdom','policy_name','policy_id']){
+      const order=collator.compare(String(left[field]??''),String(right[field]??''));
+      if(order!==0)return order;
+    }
+    return collator.compare(String(left.id),String(right.id));
+  });
+}
+
+function fortiGatePolicyDetails(primary,details=[]){
+  const fragment=document.createDocumentFragment();
+  fragment.append(managementText('strong',primary||'\u2013','management-name'));
+  for(const detail of details){
+    if(detail!==undefined&&detail!==null&&String(detail).trim()!=='')fragment.append(managementText('span',detail,'management-detail'));
+  }
+  return fragment;
+}
+
+function assignmentSourceLabel(source){
+  return ({manual:'Manuell',automatic:'Automatisch',unknown:'Unbekannt'})[String(source??'').toLowerCase()]||String(source??'')||'Unbekannt';
+}
+
+function updateFortiGatePolicyAssignmentControl(select){
+  const row=select.closest('tr'),button=row&&row.querySelector('button[data-policy-action="assign"]');
+  select.disabled=fortiGatePolicyBusy;
+  if(button)button.disabled=fortiGatePolicyBusy||select.value===select.dataset.assignedService;
+}
+
+function setFortiGatePolicyBusy(busy){
+  fortiGatePolicyBusy=busy;
+  $('#refresh-fortigate-policies').disabled=busy;
+  $('#scan-fortigate-policies').disabled=busy;
+  document.querySelectorAll('#fortigate-policy-list select[data-policy-id]').forEach(updateFortiGatePolicyAssignmentControl);
+}
+
+function renderFortiGatePolicySummary(data){
+  const summary=$('#fortigate-policy-scanner-summary');summary.replaceChildren();
+  const scannerEnabled=data.scanner_enabled===true;
+  const state=managementText('span',scannerEnabled?'Automatischer Scan aktiv':'Automatischer Scan deaktiviert','management-badge '+(scannerEnabled?'assigned':'unknown'));
+  const unknownCount=fortiGatePolicyRecords.filter(record=>fortiGatePolicyAssignment(record)==='').length;
+  summary.append(
+    state,
+    managementText('span',`${fortiGatePolicyRecords.length} Policies`,'chip'),
+    managementText('span',`${unknownCount} unbekannt`,'chip'),
+    managementText('span',`Intervall: ${scannerEnabled?formatFortiGateScanInterval(data.scan_interval):'deaktiviert'}`,'muted')
+  );
+}
+
+function renderFortiGatePolicyScans(scans){
+  const target=$('#fortigate-policy-scan-status');target.replaceChildren();
+  const records=Array.isArray(scans)?scans:(scans&&typeof scans==='object'?Object.values(scans):[]);
+  if(!records.length){target.append(managementText('div','Noch kein Scanstatus vorhanden.','empty'));return}
+  const collator=new Intl.Collator('de',{sensitivity:'base',numeric:true});
+  records.filter(record=>record&&typeof record==='object').sort((left,right)=>collator.compare(`${left.target_name??''}\u0000${left.vdom??''}`,`${right.target_name??''}\u0000${right.vdom??''}`)).forEach(scan=>{
+    const card=document.createElement('article');card.className='device-status';
+    const title=[scan.target_name||'FortiGate',scan.vdom&&`VDOM ${scan.vdom}`].filter(Boolean).join(' \u00b7 ');
+    const lastError=String(scan.last_error??'').trim(),lastSuccess=String(scan.last_success_at??'').trim();
+    const status=managementText('span',lastError?'Fehler':lastSuccess?'Aktuell':'Noch nicht gescannt',lastError?'state offline':lastSuccess?'state online':'management-badge');
+    const counts=[
+      scan.observed_count!==undefined&&`${scan.observed_count} erkannt`,
+      scan.unknown_count!==undefined&&`${scan.unknown_count} unbekannt`,
+      scan.new_count!==undefined&&`${scan.new_count} neu`
+    ].filter(Boolean).join(' \u00b7 ');
+    const meta=document.createElement('div');meta.className='device-meta';
+    meta.append(managementText('span',lastSuccess?`Letzter Erfolg: ${formatFortiGatePolicyTime(lastSuccess)}`:`Letzter Start: ${formatFortiGatePolicyTime(scan.last_started_at)}`));
+    if(counts)meta.append(document.createElement('br'),managementText('span',counts));
+    if(lastError)meta.append(document.createElement('br'),managementText('span',lastError,'error'));
+    card.append(managementText('strong',title),status,meta);target.append(card);
+  });
+  if(!target.children.length)target.append(managementText('div','Noch kein Scanstatus vorhanden.','empty'));
+}
+
+function renderFortiGatePolicies(records,services){
+  fortiGatePolicyRecords=normalizeFortiGatePolicyRecords(records);
+  fortiGatePolicyServices=normalizeFortiGatePolicyServices(services,fortiGatePolicyRecords);
+  const body=$('#fortigate-policy-list');body.replaceChildren();
+  if(!fortiGatePolicyRecords.length){
+    const row=document.createElement('tr'),cell=managementCell(row,managementText('span','Keine FortiGate-Policies im Inventar.'));
+    cell.colSpan=8;cell.className='empty';body.append(row);return;
+  }
+  for(const record of fortiGatePolicyRecords){
+    const row=document.createElement('tr'),recordID=String(record.id),assignedService=fortiGatePolicyAssignment(record);
+    row.className='policy-inventory-row'+(assignedService?'':' unknown');
+    row.dataset.policyId=recordID;
+
+    const assignment=document.createDocumentFragment();
+    assignment.append(managementText('span',assignedService||'Unbekannt','management-badge '+(assignedService?'assigned':'unknown')));
+    assignment.append(managementText('span',`Quelle: ${assignmentSourceLabel(record.assignment_source)}`,'management-detail'));
+    managementCell(row,assignment);
+
+    managementCell(row,fortiGatePolicyDetails(record.target_name||'FortiGate',[
+      record.vdom?`VDOM ${record.vdom}`:'Global',
+      record.policy_id!==undefined&&record.policy_id!==null?`Policy-ID ${record.policy_id}`:''
+    ]));
+
+    managementCell(row,fortiGatePolicyDetails(record.policy_name||`Policy ${record.policy_id??''}`,[
+      record.comments,
+      record.identity_weak?'Keine stabile FortiGate-UUID; eine Umbenennung kann als neue Policy erscheinen.':''
+    ]));
+
+    const actionLabels={accept:'Erlauben',permit:'Erlauben',deny:'Verbieten'};
+    managementCell(row,fortiGatePolicyDetails(actionLabels[String(record.action??'').toLowerCase()]||record.action||'\u2013',[
+      record.status&&`Status: ${record.status}`,
+      record.schedule&&`Zeitplan: ${record.schedule}`
+    ]));
+
+    managementCell(row,fortiGatePolicyDetails(`Quelle: ${fortiGatePolicyList(record.source_interfaces)}`,[`Ziel: ${fortiGatePolicyList(record.destination_interfaces)}`]));
+    managementCell(row,fortiGatePolicyDetails(`Quellen: ${fortiGatePolicyList(record.sources)}`,[
+      `Ziele: ${fortiGatePolicyList(record.destinations)}`,
+      `Dienste: ${fortiGatePolicyList(record.services)}`
+    ]));
+    managementCell(row,fortiGatePolicyDetails(formatFortiGatePolicyTime(record.last_seen_at),[
+      record.first_seen_at?`Erstmals: ${formatFortiGatePolicyTime(record.first_seen_at)}`:''
+    ]));
+
+    const controls=document.createElement('div');controls.className='policy-assignment-controls';
+    const select=document.createElement('select');select.dataset.policyId=recordID;select.dataset.assignedService=assignedService;
+    select.setAttribute('aria-label',`Zieldienst f\u00fcr ${record.policy_name||`Policy ${record.policy_id??''}`}`);
+    const unknownOption=document.createElement('option');unknownOption.value='';unknownOption.textContent='Unbekannt';select.append(unknownOption);
+    for(const service of fortiGatePolicyServices){const option=document.createElement('option');option.value=service;option.textContent=service;select.append(option)}
+    select.value=assignedService;
+    const move=document.createElement('button');move.type='button';move.textContent='Verschieben';move.className='primary';move.dataset.policyAction='assign';move.dataset.policyId=recordID;
+    controls.append(select,move);managementCell(row,controls);body.append(row);
+    updateFortiGatePolicyAssignmentControl(select);
+  }
+}
+
+async function fetchFortiGatePolicies(){
+  const data=await request('admin/fortigate-policies');
+  if(String(data.unknown_service??'').trim()!=='')fortiGatePolicyUnknownService=String(data.unknown_service).trim();
+  renderFortiGatePolicies(data.records,data.services);
+  renderFortiGatePolicySummary(data);
+  renderFortiGatePolicyScans(data.scans);
+  return data;
+}
+
+function renderFortiGatePolicyLoadError(error){
+  fortiGatePolicyRecords=[];fortiGatePolicyServices=[];
+  const body=$('#fortigate-policy-list'),row=document.createElement('tr'),cell=managementCell(row,managementText('span',error.message,'error'));
+  cell.colSpan=8;body.replaceChildren(row);
+  const summary=$('#fortigate-policy-scanner-summary');summary.replaceChildren(managementText('span','Scannerstatus nicht verf\u00fcgbar.','error'));
+  const scans=$('#fortigate-policy-scan-status');scans.replaceChildren(managementText('div','Scanstatus nicht verf\u00fcgbar.','empty error'));
+}
+
+async function loadFortiGatePolicies(){
+  if(!canManageFortiGates()||fortiGatePolicyBusy)return;
+  setFortiGatePolicyBusy(true);
+  setManagementMessage($('#fortigate-policy-message'),'Policy-Inventar wird aktualisiert \u2026');
+  try{
+    await fetchFortiGatePolicies();
+    const unknownCount=fortiGatePolicyRecords.filter(record=>fortiGatePolicyAssignment(record)==='').length;
+    setManagementMessage($('#fortigate-policy-message'),`Policy-Inventar aktualisiert: ${fortiGatePolicyRecords.length} Eintr\u00e4ge, ${unknownCount} unbekannt.`);
+  }catch(error){renderFortiGatePolicyLoadError(error);setManagementMessage($('#fortigate-policy-message'),'Policy-Inventar konnte nicht geladen werden: '+error.message,true)}
+  finally{setFortiGatePolicyBusy(false)}
+}
+
+async function scanFortiGatePolicies(){
+  if(!canManageFortiGates()||fortiGatePolicyBusy)return;
+  setFortiGatePolicyBusy(true);
+  setManagementMessage($('#fortigate-policy-message'),'FortiGate-Policy-Scan wird ausgef\u00fchrt \u2026');
+  try{
+    const result=await request('admin/fortigate-policies/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    await fetchFortiGatePolicies();
+    const failed=Number(result.scan?.failed||0),targets=Number(result.scan?.targets||0);
+    setManagementMessage($('#fortigate-policy-message'),failed?`Policy-Scan abgeschlossen: ${failed} von ${targets} Zielen mit Fehler.`:'FortiGate-Policy-Scan ist erfolgreich abgeschlossen; der aktuelle Inventarstand wurde geladen.',failed>0);
+  }catch(error){setManagementMessage($('#fortigate-policy-message'),'Policy-Scan konnte nicht ausgef\u00fchrt werden: '+error.message,true)}
+  finally{setFortiGatePolicyBusy(false)}
+}
+
+async function assignFortiGatePolicy(record,service,select){
+  if(!canManageFortiGates()||fortiGatePolicyBusy)return;
+  const assignedService=fortiGatePolicyAssignment(record);
+  if(service===assignedService)return;
+  setFortiGatePolicyBusy(true);
+  const destination=service||'Unbekannt';
+  setManagementMessage($('#fortigate-policy-message'),`Policy ${record.policy_name||record.policy_id} wird nach \u201e${destination}\u201c verschoben \u2026`);
+  try{
+    await request('admin/fortigate-policies/assign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:record.id,revision:record.revision,service})});
+    await fetchFortiGatePolicies();
+    setManagementMessage($('#fortigate-policy-message'),`Policy ${record.policy_name||record.policy_id} wurde nach \u201e${destination}\u201c verschoben.`);
+  }catch(error){
+    if(select.isConnected)select.value=assignedService;
+    const suffix=error.status===409?' Bitte das Inventar aktualisieren und erneut versuchen.':'';
+    setManagementMessage($('#fortigate-policy-message'),error.message+suffix,true);
+  }finally{setFortiGatePolicyBusy(false)}
+}
+
 async function loadFortiGateAdministration(){
   try{
     const status=await request('admin/status');
     if(!['admin','developer'].includes(status.role))return;
     currentRole=status.role;
     $('#fortigate-management').hidden=false;
-    await loadAdminFortiGates();
+    $('#fortigate-policy-inventory').hidden=false;
+    await Promise.all([loadAdminFortiGates(),loadFortiGatePolicies()]);
   }catch(_){currentRole=''}
 }
 
@@ -317,7 +579,7 @@ async function saveFortiGate(event){
     const result=await request('admin/fortigates',{method:wasEditing?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     closeFortiGateForm();
     invalidateRoutingAfterDeviceChange();
-    await Promise.all([loadAdminFortiGates(),loadDeviceStatus()]);
+    await Promise.all([loadAdminFortiGates(),loadFortiGatePolicies(),loadDeviceStatus()]);
     setManagementMessage($('#fortigate-management-message'),wasEditing?'FortiGate wurde aktualisiert.':`${result.created_count||1} VDOM-Ziele wurden erkannt und angelegt.`);
   }catch(error){
     const suffix=error.status===409?' Bitte die Geräteliste neu laden und erneut versuchen.':'';
@@ -355,7 +617,7 @@ async function deleteAdminFortiGate(record,button){
   try{
     await request('admin/fortigates',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:record.id,revision:record.revision})});
     invalidateRoutingAfterDeviceChange();
-    await Promise.all([loadAdminFortiGates(),loadDeviceStatus()]);
+    await Promise.all([loadAdminFortiGates(),loadFortiGatePolicies(),loadDeviceStatus()]);
     setManagementMessage($('#fortigate-management-message'),`FortiGate ${record.name} wurde gelöscht.`);
   }catch(error){
     const suffix=error.status===409?' Bitte die Geräteliste neu laden und erneut versuchen.':'';
@@ -383,12 +645,24 @@ function routeItems(routes,truncated){
   return `<ul class="route-list">${items}</ul>${truncated?'<p class="notice">Weitere passende Routen wurden aus Sicherheitsgründen ausgeblendet.</p>':''}`;
 }
 
+function routeEndpoint(endpoint){
+  if(!endpoint)return 'Nicht eindeutig bestimmt';
+  return [endpoint.name,endpoint.vdom&&`VDOM ${endpoint.vdom}`].filter(Boolean).map(escapeHTML).join(' · ')||'Nicht eindeutig bestimmt';
+}
+
+function routeValues(label,values){
+  if(!Array.isArray(values)||!values.length)return '';
+  return `<div><strong>${label}:</strong> ${values.map(escapeHTML).join(', ')}</div>`;
+}
+
 function renderRouting(data){
-  const affected=data.affected_firewalls||[];
-  $('#routing-summary').innerHTML=`<div class="summary"><strong>Betroffene Firewalls:</strong>${affected.length?affected.map(name=>`<span class="chip">${escapeHTML(name)}</span>`).join(''):'<span class="muted">Keine eindeutigen Kandidaten</span>'}</div><div class="muted">${escapeHTML(data.source)} → ${escapeHTML(data.destination)} · ${escapeHTML(data.address_family)} · VRF ${escapeHTML(data.vrf)} · Stand ${escapeHTML(new Date(data.analyzed_at).toLocaleString('de-DE'))}</div>${data.partial?'<div class="notice">Teilergebnis: Mindestens ein FortiGate war nicht erreichbar.</div>':''}<div class="notice">${escapeHTML(data.notice)}</div>`;
-  const devices=data.devices||[];
-  const assessmentLabel={endpoint_candidate:'Endpunkt-Kandidat',transit_candidate:'Transit-Kandidat',drop_candidate:'Drop-Kandidat',weak_candidate:'Schwacher Hinweis',not_affected:'Nicht betroffen',inconclusive:'Nicht bestimmbar',unavailable:'Nicht verfügbar'};
-  $('#routing-devices').innerHTML=devices.length?devices.map(device=>`<article class="routing-device ${device.affected?'affected':''}"><div class="routing-head"><strong>${escapeHTML(device.name)}${device.vdom?` · VDOM ${escapeHTML(device.vdom)}`:''}</strong><span class="state ${device.online?'online':'offline'}">${escapeHTML(device.error?'Fehler':assessmentLabel[device.assessment]||device.assessment)}</span></div>${device.error?`<div class="empty error">${escapeHTML(device.error)}</div>`:`${device.source_ecmp||device.destination_ecmp?'<div class="notice">ECMP erkannt: Mehrere gleichwertige nächste Hops sind möglich.</div>':device.source_multipath||device.destination_multipath?'<div class="notice">Mehrere Routing-Einträge für denselben Präfix gefunden; die Gleichwertigkeit ist nicht eindeutig belegt.</div>':''}<div class="routing-body"><div class="route-side"><h3>Rückroute zum Quellnetz</h3>${routeItems(device.source_routes||[],device.source_routes_truncated)}</div><div class="firewall-hop">${escapeHTML(device.name)}<br><small>${escapeHTML(device.route_count||0)} Routen gelesen</small></div><div class="route-side"><h3>Vorwärtsroute zum Zielnetz</h3>${routeItems(device.destination_routes||[],device.destination_routes_truncated)}</div></div>`}</article>`).join(''):'<div class="empty">Keine FortiGates konfiguriert.</div>';
+  const statusLabel={complete:'Vollständig',ambiguous:'Mehrdeutig',unreachable:'Nicht erreichbar',unresolved:'Nicht auflösbar',not_found:'Nicht gefunden',partial:'Unvollständig',failed:'Fehlgeschlagen',empty:'Nicht gefunden'};
+  const path=Array.isArray(data.route_path)?data.route_path:[];
+  const pathMessage=data.path_message||(data.path_status==='ambiguous'?'Der Routing-Pfad ist mehrdeutig.':!path.length?'Kein eindeutiger Routing-Pfad gefunden.':!data.path_ordering_available?'Die Reihenfolge des Routing-Pfads ist nicht eindeutig bestimmt.':!data.path_complete?'Der Routing-Pfad ist unvollständig.':'');
+  const analyzedAt=data.analyzed_at?new Date(data.analyzed_at).toLocaleString('de-DE'):'–';
+  $('#routing-summary').innerHTML=`<div class="summary"><strong>Routing-Pfad:</strong><span class="chip">${escapeHTML(statusLabel[data.path_status]||data.path_status||'Nicht bestimmt')}</span></div><div class="summary"><strong>Quell-VDOM:</strong><span>${routeEndpoint(data.source_endpoint)}</span><strong>Ziel-Firewall / VDOM:</strong><span>${routeEndpoint(data.destination_endpoint)}</span></div><div class="muted">${escapeHTML(data.source)} → ${escapeHTML(data.destination)} · ${escapeHTML(data.address_family)} · VRF ${escapeHTML(data.vrf)} · Stand ${escapeHTML(analyzedAt)}</div>${data.partial?'<div class="notice">Teilergebnis: Mindestens ein FortiGate war nicht erreichbar oder die Interface-Topologie war nicht vollständig lesbar.</div>':''}${pathMessage?`<div class="notice">${escapeHTML(pathMessage)}</div>`:''}`;
+  const roleLabel={source:'Quelle',transit:'Transit',destination:'Ziel',source_destination:'Quelle und Ziel'};
+  $('#routing-path').innerHTML=path.length?`<ol class="routing-path">${path.map((hop,index)=>{const nextHops=Array.isArray(hop.next_hops)?hop.next_hops:[];return `<li><article class="routing-hop"><div class="routing-head"><strong>${escapeHTML(hop.sequence??index+1)}. ${escapeHTML(hop.name)}${hop.vdom?` · VDOM ${escapeHTML(hop.vdom)}`:''}</strong><span class="state online">${escapeHTML(roleLabel[hop.role]||hop.role||'Hop')}</span></div>${hop.ecmp?'<div class="notice">ECMP erkannt: Mehrere gleichwertige nächste Hops sind möglich.</div>':hop.multipath?'<div class="notice">Mehrere Routing-Pfade erkannt; die Gleichwertigkeit ist nicht eindeutig belegt.</div>':''}<div class="routing-body"><div class="hop-meta">${routeValues('Eingang',hop.ingress_interfaces)}${routeValues('Ausgang',hop.egress_interfaces)}${routeValues('Next-Hop',nextHops)}</div><div class="route-side"><h3>Vorwärtsroute zum Zielnetz</h3>${routeItems(hop.selected_routes||[],hop.selected_routes_truncated)}</div></div></article>${index<path.length-1?`<div class="route-connector"><span class="arrow" aria-hidden="true">↓</span><span>${nextHops.length?`Next-Hop ${nextHops.map(escapeHTML).join(', ')}`:'Nächste Firewall'}</span></div>`:''}</li>`}).join('')}</ol>`:`<div class="empty"><strong>Kein eindeutiger Routing-Pfad.</strong>${pathMessage?`<br>${escapeHTML(pathMessage)}`:''}</div>`;
   $('#routing-results').hidden=false;
 }
 
@@ -400,11 +674,13 @@ $('#routing-form').addEventListener('submit',async event=>{
   const button=$('#analyze'),message=$('#message');button.disabled=true;message.className='';message.textContent='Routingtabellen werden ausgelesen …';
   const params=new URLSearchParams({source:$('#source').value.trim(),destination:$('#destination').value.trim(),vrf:$('#vrf').value.trim()});
   try{const data=await request('devices/routes?'+params.toString(),{signal:routeController.signal});if(requestID!==routeRequest)return;renderRouting(data);message.className='success';message.textContent='Routinganalyse abgeschlossen.'}
-  catch(error){if(error.name==='AbortError'||requestID!==routeRequest)return;if(error.data&&Array.isArray(error.data.devices))renderRouting(error.data);message.className='error';message.textContent=error.message}
+  catch(error){if(error.name==='AbortError'||requestID!==routeRequest)return;if(error.data&&Array.isArray(error.data.route_path))renderRouting(error.data);message.className='error';message.textContent=error.message}
   finally{if(requestID===routeRequest)button.disabled=false}
 });
 $('#refresh-devices').addEventListener('click',loadDeviceStatus);
 $('#add-fortigate').addEventListener('click',()=>openFortiGateForm());
+$('#refresh-fortigate-policies').addEventListener('click',loadFortiGatePolicies);
+$('#scan-fortigate-policies').addEventListener('click',scanFortiGatePolicies);
 $('#fortigate-form').addEventListener('submit',saveFortiGate);
 $('#cancel-fortigate').addEventListener('click',closeFortiGateForm);
 $('#fortigate-dialog').addEventListener('close',resetFortiGateForm);
@@ -421,6 +697,17 @@ $('#fortigate-management-list').addEventListener('click',event=>{
   case 'test':testAdminFortiGate(record,button);break;
   case 'delete':deleteAdminFortiGate(record,button);break;
   }
+});
+$('#fortigate-policy-list').addEventListener('change',event=>{
+  const select=event.target.closest('select[data-policy-id]');
+  if(select)updateFortiGatePolicyAssignmentControl(select);
+});
+$('#fortigate-policy-list').addEventListener('click',event=>{
+  const button=event.target.closest('button[data-policy-action="assign"]');
+  if(!button)return;
+  const record=fortiGatePolicyRecords.find(item=>String(item.id)===button.dataset.policyId),row=button.closest('tr'),select=row&&row.querySelector('select[data-policy-id]');
+  if(!record||!select)return;
+  assignFortiGatePolicy(record,select.value,select);
 });
 loadDeviceStatus();
 loadFortiGateAdministration();

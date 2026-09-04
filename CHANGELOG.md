@@ -31,9 +31,16 @@ Versionsnummer und Datum.
 - Where-used-Prüfung, Lifecycle-Befunde und Rollback als neue prüfpflichtige
   Revision.
 - Kopieren und Verschieben von Regeln zwischen Diensten.
+- Laufendes, ausschließlich lesendes FortiGate-Policy-Inventar mit automatischer
+  Zuordnung zur zuletzt veröffentlichten Policy, virtuellem Dienst `unbekannt`
+  und manueller Dienstzuordnung durch Administratoren.
 
 ### Geändert
 
+- Die Routinganalyse zeigt jetzt ausschließlich den eindeutig ermittelten,
+  geordneten Weg vom VDOM mit dem direkt verbundenen Quellnetz bis zur
+  Ziel-Firewall. Next Hops werden über exakte VDOM-Interface-Adressen verbunden;
+  unbeteiligte Routing-Kandidaten werden nicht mehr als Pfad angezeigt.
 - Die Willkommensseite zeigt ausschließlich das Changelog.
 - Regeln sind pro Dienst einklappbar und werden in einer übersichtlichen Untertabelle bearbeitet.
 - LDAP-Benutzer können lokal nur in E-Mail-Adresse und Policy-Rolle geändert

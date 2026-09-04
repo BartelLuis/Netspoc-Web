@@ -38,10 +38,21 @@ test('Devices page performs safe, cancellable same-origin routing requests', asy
   assert.match(html, /devices\/routes\?/);
   assert.match(html, /fortinet\/status/);
   assert.match(html, /new AbortController\(\)/);
-  assert.match(html, /escapeHTML\(device\.error\)/);
-  assert.match(html, /Rückroute zum Quellnetz/);
+  assert.match(html, /Routing-Pfad/);
+  assert.match(html, /Quell-VDOM/);
+  assert.match(html, /Ziel-Firewall \/ VDOM/);
   assert.match(html, /Vorwärtsroute zum Zielnetz/);
-  assert.match(html, /Transit-Kandidat/);
+  assert.match(html, /data\.route_path/);
+  assert.match(html, /data\.path_ordering_available/);
+  assert.match(html, /data\.path_complete/);
+  assert.match(html, /data\.path_status===['"]ambiguous['"]/);
+  assert.match(html, /escapeHTML\(hop\.name\)/);
+  assert.match(html, /escapeHTML\(pathMessage\)/);
+  assert.match(html, /Kein eindeutiger Routing-Pfad/);
+  const rendererStart = html.indexOf('function renderRouting(data)');
+  const rendererEnd = html.indexOf("$('#routing-form').addEventListener", rendererStart);
+  assert.ok(rendererStart >= 0 && rendererEnd > rendererStart);
+  assert.doesNotMatch(html.slice(rendererStart, rendererEnd), /data\.devices|devices\.map/);
   assert.doesNotMatch(html, /access_token/i);
 });
 
@@ -58,7 +69,7 @@ test('Routing UI discards stale updates and renders structured HTTP failures', a
   const startRequest = submit.indexOf("await request('devices/routes?");
   assert.ok(hideResults >= 0 && hideResults < startRequest);
   assert.match(submit, /catch\(error\)\{if\(error\.name===['"]AbortError['"]\|\|requestID!==routeRequest\)return;/);
-  assert.match(submit, /if\(error\.data&&Array\.isArray\(error\.data\.devices\)\)renderRouting\(error\.data\)/);
+  assert.match(submit, /if\(error\.data&&Array\.isArray\(error\.data\.route_path\)\)renderRouting\(error\.data\)/);
 });
 
 test('FortiGate management is admin/developer-gated, secret-safe and fully wired', async () => {
@@ -85,6 +96,26 @@ test('FortiGate management is admin/developer-gated, secret-safe and fully wired
     .map(match => match[1])
     .filter(source => source.trim());
   assert.doesNotThrow(() => new Function(inlineScripts.at(-1)));
+});
+
+test('FortiGate policy inventory is read-only, admin-gated and persistently assignable', async () => {
+  const html = await readFile(join(root, 'devices.html'), 'utf8');
+  assert.match(html, /id="fortigate-policy-inventory"[^>]*hidden/);
+  assert.match(html, /request\('admin\/fortigate-policies'\)/);
+  assert.match(html, /request\('admin\/fortigate-policies\/scan',\{method:'POST'/);
+  assert.match(html, /request\('admin\/fortigate-policies\/assign',\{method:'POST'/);
+  assert.match(html, /JSON\.stringify\(\{id:record\.id,revision:record\.revision,service\}\)/);
+  assert.match(html, /assignment_source/);
+  assert.match(html, /fortiGatePolicyUnknownService='unbekannt'/);
+  assert.match(html, /await fetchFortiGatePolicies\(\)/);
+  assert.match(html, /\$\('#fortigate-policy-inventory'\)\.hidden=false/);
+  assert.match(html, /Promise\.all\(\[loadAdminFortiGates\(\),loadFortiGatePolicies\(\)\]\)/);
+
+  const scannerStart = html.indexOf('async function scanFortiGatePolicies()');
+  const scannerEnd = html.indexOf('async function assignFortiGatePolicy', scannerStart);
+  assert.ok(scannerStart >= 0 && scannerEnd > scannerStart);
+  const scanner = html.slice(scannerStart, scannerEnd);
+  assert.doesNotMatch(scanner, /admin\/(?:policy|publish|deploy|stage)/);
 });
 
 test('Container image includes the Devices page and routing resources', async () => {

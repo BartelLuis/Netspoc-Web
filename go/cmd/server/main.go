@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/hknutzen/Netspoc-Web/go/pkg/backend"
 )
@@ -15,14 +20,27 @@ func main() {
 		panic("LISTENPORT must be set")
 	}
 	listen := os.Getenv("LISTENADDRESS") + ":" + port
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	var handler http.Handler
 	if staticDir := os.Getenv("STATIC_DIR"); staticDir != "" {
-		handler = backend.MainHandlerWithStatic(spaFiles(staticDir))
+		handler = backend.MainHandlerWithStaticContext(ctx, spaFiles(staticDir))
 	} else {
-		handler = backend.MainHandler()
+		handler = backend.MainHandlerContext(ctx)
 	}
+	server := &http.Server{Addr: listen, Handler: handler}
+	go func() {
+		<-ctx.Done()
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownContext); err != nil {
+			log.Printf("Graceful shutdown failed: %v", err)
+		}
+	}()
 	log.Printf("Listening on %s", listen)
-	log.Fatal(http.ListenAndServe(listen, handler))
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
 }
 
 // spaFiles serves the legacy web application while preventing directory

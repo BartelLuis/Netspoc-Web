@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFortiGateReadOnlySetting(t *testing.T) {
@@ -34,6 +35,35 @@ func TestFortiGateReadOnlySetting(t *testing.T) {
 	t.Setenv(fortiGateReadOnlyEnv, "sometimes")
 	if _, err := fortiGateReadOnlySetting(); err == nil || !strings.Contains(err.Error(), "true or false") {
 		t.Fatalf("invalid read-only setting error = %v", err)
+	}
+}
+
+func TestFortiGatePolicyScanIntervalSetting(t *testing.T) {
+	for name, test := range map[string]struct {
+		value string
+		want  time.Duration
+	}{
+		"unset":   {},
+		"zero":    {value: "0"},
+		"seconds": {value: "30s", want: 30 * time.Second},
+		"hours":   {value: "24h", want: 24 * time.Hour},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(fortiGatePolicyScanIntervalEnv, test.value)
+			got, err := fortiGatePolicyScanIntervalSetting()
+			if err != nil || got != test.want {
+				t.Fatalf("fortiGatePolicyScanIntervalSetting() = %v, %v; want %v, nil", got, err, test.want)
+			}
+		})
+	}
+
+	for _, value := range []string{"500ms", "25h", "sometimes"} {
+		t.Run("invalid_"+value, func(t *testing.T) {
+			t.Setenv(fortiGatePolicyScanIntervalEnv, value)
+			if _, err := fortiGatePolicyScanIntervalSetting(); err == nil {
+				t.Fatalf("invalid policy scan interval %q was accepted", value)
+			}
+		})
 	}
 }
 

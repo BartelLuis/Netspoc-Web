@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"net/http"
 	pathpkg "path"
 	"strings"
@@ -10,10 +11,20 @@ import (
 // through one shared session manager. Other static assets stay public so
 // the login and setup pages can load without creating server-side sessions.
 func MainHandlerWithStatic(static http.Handler) http.Handler {
+	return MainHandlerWithStaticContext(context.Background(), static)
+}
+
+// MainHandlerWithStaticContext starts background work whose lifetime is tied
+// to ctx while serving the API and protected frontend entry points.
+func MainHandlerWithStaticContext(ctx context.Context, static http.Handler) http.Handler {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if static == nil {
 		static = http.NotFoundHandler()
 	}
 	api, s := getMux()
+	s.startFortiGatePolicyScanner(ctx)
 	protectedMux := http.NewServeMux()
 	protectedMux.Handle("/backend/", http.StripPrefix("/backend", api))
 	protectedMux.Handle("/backend6/", http.StripPrefix("/backend6", api))

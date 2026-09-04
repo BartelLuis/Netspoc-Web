@@ -139,6 +139,46 @@ func (s *state) policyDB() (*sql.DB, error) {
 		CREATE TABLE IF NOT EXISTS managed_fortigate_credential_cleanup (
 			credential_id TEXT PRIMARY KEY,
 			not_before INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS fortigate_policy_observation (
+			id TEXT PRIMARY KEY,
+			target_id TEXT NOT NULL,
+			target_name TEXT NOT NULL,
+			endpoint_id TEXT NOT NULL,
+			vdom TEXT NOT NULL,
+			remote_identity TEXT NOT NULL,
+			identity_weak INTEGER NOT NULL CHECK (identity_weak IN (0, 1)),
+			policy_id TEXT NOT NULL,
+			policy_name TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
+			document TEXT NOT NULL,
+			assigned_service TEXT NOT NULL DEFAULT '',
+			assignment_source TEXT NOT NULL CHECK (assignment_source IN ('unknown', 'automatic', 'manual')),
+			present INTEGER NOT NULL CHECK (present IN (0, 1)),
+			first_seen_at TEXT NOT NULL,
+			last_seen_at TEXT NOT NULL,
+			last_scan_id TEXT NOT NULL,
+			revision INTEGER NOT NULL CHECK (revision >= 1),
+			UNIQUE(target_id, remote_identity)
+		);
+		CREATE INDEX IF NOT EXISTS fortigate_policy_observation_assignment
+			ON fortigate_policy_observation(present, assigned_service, target_name, policy_name);
+		CREATE TABLE IF NOT EXISTS fortigate_policy_scan_state (
+			target_id TEXT PRIMARY KEY,
+			target_name TEXT NOT NULL,
+			endpoint_id TEXT NOT NULL,
+			vdom TEXT NOT NULL,
+			last_started_at TEXT NOT NULL,
+			last_success_at TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			observed_count INTEGER NOT NULL DEFAULT 0 CHECK (observed_count >= 0),
+			unknown_count INTEGER NOT NULL DEFAULT 0 CHECK (unknown_count >= 0),
+			new_count INTEGER NOT NULL DEFAULT 0 CHECK (new_count >= 0)
+		);
+		CREATE TABLE IF NOT EXISTS fortigate_policy_scan_lock (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			holder TEXT NOT NULL,
+			expires_at INTEGER NOT NULL
 		);`); err != nil {
 		db.Close()
 		return nil, err

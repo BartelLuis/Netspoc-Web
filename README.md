@@ -225,6 +225,7 @@ POLICYWEB_BOOTSTRAP_TOKEN=ein-langes-zufälliges-einmalgeheimnis
 POLICYWEB_COOKIE_SECURE=false
 POLICYWEB_TRUST_PROXY_HEADERS=false
 POLICYWEB_FORTIGATE_READ_ONLY=true
+POLICYWEB_FORTIGATE_POLICY_SCAN_INTERVAL=5m
 ```
 
 `POLICYWEB_BOOTSTRAP_TOKEN` wird nur für die einmalige Ersteinrichtung benötigt
@@ -525,19 +526,31 @@ Für Administratoren, Bearbeiter, Reviewer, Deployer und Developer steht in der
 Hauptnavigation der Bereich **Geräte** zur Verfügung. Er zeigt den Status der
 konfigurierten Fortinet-Ziele. Für ein Quell- und ein Zielnetz liest
 Policy-Web die aktuellen IPv4- oder IPv6-Routingtabellen aller konfigurierten
-FortiGates read-only aus und zeigt je VDOM:
+FortiGates sowie deren konfigurierte Interface-Adressen read-only aus. Daraus
+wird ein geordneter Vorwärtspfad ermittelt:
 
-- die effektiven Rückrouten zum Quellnetz,
-- die effektiven Vorwärtsrouten zum Zielnetz,
-- Interface, Gateway, Routingprotokoll, Distanz, Metrik, Priorität und VRF,
-- ECMP-Alternativen, Blackhole-Routen und nicht erreichbare Geräte sowie
-- die daraus abgeleiteten Endpunkt-, Transit- und Drop-Kandidaten.
+- Quell-VDOM ist ausschließlich ein VDOM, in dem das gesamte Quellnetz direkt
+  verbunden ist,
+- Ziel-Firewall ist ausschließlich ein VDOM, in dem das gesamte Zielnetz direkt
+  verbunden ist,
+- dazwischen wird pro Hop die aktive LPM-Route zum Ziel verwendet und deren
+  Gateway exakt einer Interface-Adresse des nächsten VDOMs im gleichen direkt
+  verbundenen Transitpräfix zugeordnet,
+- angezeigt werden nur die geordneten Pfad-Hops mit Eingangs-/Ausgangsinterface,
+  Next Hop und ausgewählter Vorwärtsroute.
 
-Die Anzeige bezeichnet Firewalls bewusst als **Routing-Kandidaten**. Aus
-Routingtabellen allein lassen sich die Reihenfolge mehrerer Firewalls sowie
-Policy-Based Routing, SD-WAN-Entscheidungen, NAT, Firewall-Policies und der
-tatsächliche Rückweg nicht zweifelsfrei bestimmen. Dafür wären zusätzliche
-Topologie- und Nachbarschaftsdaten erforderlich.
+Unbeteiligte VDOMs, die lediglich Routen zu beiden Netzen kennen, erscheinen
+nicht im Pfad. Bei mehreren Besitzern eines Netzes, mehreren möglichen
+Gateway-VDOMs, Schleifen, Blackholes, unbekannten externen Next Hops oder nicht
+lesbaren Geräte-/Interface-Daten weist die Oberfläche das Ergebnis als
+mehrdeutig, nicht erreichbar, nicht auflösbar oder unvollständig aus, statt eine
+Reihenfolge zu erraten. Policy-Based Routing, SD-WAN-Laufzeitentscheidungen, NAT,
+Firewall-Policies und der tatsächliche Rückweg sind nicht Teil dieser
+Routingtabellenanalyse.
+
+Ein Transitpräfix muss dabei global genau zwei der gelesenen VDOMs verbinden.
+Gemeinsam genutzte oder in mehreren Mandanten wiederverwendete Transitnetze
+werden ohne explizite Nachbarschaftsdaten bewusst als mehrdeutig abgebrochen.
 
 Die Analyse ist immer auf genau eine VRF begrenzt. Im Formular ist standardmäßig
 VRF `0` ausgewählt; passend zu FortiOS 7.4 kann für getrennte Routinginstanzen
@@ -559,8 +572,35 @@ haben keinen Deployment-Zugriff. Deployment-Ziele bleiben bewusst statisch in
 `fortinet_targets` mit referenzierten Umgebungsvariablen konfiguriert; sie werden
 in der Geräteansicht schreibgeschützt angezeigt. Für jede Routinganalyse muss
 ein eindeutiges `vdom` gesetzt sein. Der verwendete FortiGate-API-Benutzer
-benötigt read-only Zugriff auf die Router-Monitor-API. Token und ungefilterte
-Geräteantworten werden nicht an den Browser weitergereicht.
+benötigt read-only Zugriff auf die Router-Monitor-API und auf
+`/api/v2/cmdb/system/interface`. Token und ungefilterte Geräteantworten werden
+nicht an den Browser weitergereicht.
+
+### FortiGate-Policies laufend inventarisieren
+
+Policy-Web kann die Firewall-Policies aller aktivierten FortiGates regelmäßig
+und ausschließlich per `GET` einlesen. Das Intervall wird in `.env` gesetzt:
+
+```dotenv
+POLICYWEB_FORTIGATE_POLICY_SCAN_INTERVAL=5m
+```
+
+Eine leere Variable oder der Wert `0` deaktiviert den Hintergrundscan. Andere
+Werte sind Go-Zeitangaben zwischen `1s` und `24h`, etwa `30s`, `5m` oder `1h`.
+
+Beim Abgleich dient immer die zuletzt veröffentlichte Policy als Referenz. Ein
+beobachteter FortiGate-Policy-Name wird einem Dienst automatisch zugeordnet,
+wenn er dort eindeutig vorkommt und zum Zielkontext des FortiGate-Ziels passt.
+Policies ohne eindeutigen Treffer erscheinen im virtuellen Dienst
+**unbekannt**. Administratoren und Developer können diese Inventareinträge in
+der Geräteansicht manuell einem veröffentlichten Dienst zuordnen; die manuelle
+Zuordnung bleibt bei späteren Scans erhalten. Das gilt auch, wenn ein Eintrag
+bewusst zurück nach **unbekannt** verschoben wird.
+
+Der Scan und die Zuordnung sind bewusst nur ein Ist-Inventar. Sie verändern
+weder einen Policy-Entwurf noch eine veröffentlichte Policy und senden keine
+`POST`-, `PUT`- oder `DELETE`-Anfragen an FortiGate. Insbesondere erzeugt eine
+manuelle Zuordnung kein Deployment und ändert keine Geräte-Policy.
 
 ## SMTP konfigurieren
 

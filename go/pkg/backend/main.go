@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -82,6 +83,9 @@ func getMux() (*http.ServeMux, *state) {
 	needsLoginMux.HandleFunc("/requests/context", s.policyRequestContext)
 	needsLoginMux.HandleFunc("/admin/fortigates", s.adminFortiGates)
 	needsLoginMux.HandleFunc("/admin/fortigates/test", s.adminTestFortiGate)
+	needsLoginMux.HandleFunc("/admin/fortigate-policies", s.adminFortiGatePolicies)
+	needsLoginMux.HandleFunc("/admin/fortigate-policies/scan", s.adminScanFortiGatePolicies)
+	needsLoginMux.HandleFunc("/admin/fortigate-policies/assign", s.adminAssignFortiGatePolicy)
 	needsLoginMux.HandleFunc("/admin/requests", s.adminPolicyRequests)
 	needsLoginMux.HandleFunc("/admin/requests/stage", s.adminStagePolicyRequest)
 	needsLoginMux.HandleFunc("/admin/requests/reject", s.adminRejectPolicyRequest)
@@ -238,7 +242,16 @@ func sameRequestOrigin(r *http.Request, rawURL string) bool {
 }
 
 func MainHandler() http.Handler {
+	return MainHandlerContext(context.Background())
+}
+
+// MainHandlerContext starts background work whose lifetime is tied to ctx.
+func MainHandlerContext(ctx context.Context) http.Handler {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	mux, s := getMux()
+	s.startFortiGatePolicyScanner(ctx)
 	return RecoveryHandler(SessionHandler(s, mux))
 }
 

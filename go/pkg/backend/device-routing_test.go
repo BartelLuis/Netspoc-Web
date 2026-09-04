@@ -18,6 +18,204 @@ func routeForTest(network, gateway, iface string, vrf int) deviceRoute {
 	return deviceRoute{Network: prefix.String(), Gateway: gateway, Interface: iface, VRF: &vrf, prefix: prefix}
 }
 
+func connectedRouteForPathTest(network, iface string, vrf int) deviceRoute {
+	route := routeForTest(network, "", iface, vrf)
+	route.Protocol = "connected"
+	return route
+}
+
+func staticRouteForPathTest(network, gateway, iface string, vrf int) deviceRoute {
+	route := routeForTest(network, gateway, iface, vrf)
+	route.Protocol = "static"
+	return route
+}
+
+func interfaceAddressForPathTest(iface, address string) deviceInterfaceAddress {
+	return deviceInterfaceAddress{Interface: iface, Address: netip.MustParseAddr(address)}
+}
+
+func routePathDeviceForTest(id, name, vdom string, routes []deviceRoute, addresses []deviceInterfaceAddress, source, destination netip.Prefix, vrf int) deviceRouteResult {
+	sourceRoutes := effectiveDeviceRoutes(routes, source, vrf)
+	destinationRoutes := effectiveDeviceRoutes(routes, destination, vrf)
+	return deviceRouteResult{
+		TargetID:             id,
+		Name:                 name,
+		VDOM:                 vdom,
+		Online:               true,
+		SourceRoutes:         sourceRoutes,
+		DestinationRoutes:    destinationRoutes,
+		SourceConnected:      containsEndpointRoute(sourceRoutes),
+		DestinationConnected: containsEndpointRoute(destinationRoutes),
+		routes:               routes,
+		interfaceAddresses:   addresses,
+	}
+}
+
+func TestDeriveDeviceRoutePathOrdersUniquePathAndExcludesUnrelatedCandidate(t *testing.T) {
+	source := netip.MustParsePrefix("10.10.1.0/24")
+	destination := netip.MustParsePrefix("172.20.1.0/24")
+
+	sourceVDOM := routePathDeviceForTest("source-id", "source-fw", "tenant-a", []deviceRoute{
+		connectedRouteForPathTest("10.10.0.0/16", "lan", 0),
+		connectedRouteForPathTest("192.0.2.0/30", "to-core", 0),
+		staticRouteForPathTest("172.20.0.0/16", "192.0.2.2", "to-core", 0),
+	}, []deviceInterfaceAddress{
+		interfaceAddressForPathTest("lan", "10.10.0.1"),
+		interfaceAddressForPathTest("to-core", "192.0.2.1"),
+	}, source, destination, 0)
+	transitVDOM := routePathDeviceForTest("transit-id", "core-fw", "root", []deviceRoute{
+		staticRouteForPathTest("10.10.0.0/16", "192.0.2.1", "to-source", 0),
+		connectedRouteForPathTest("192.0.2.0/30", "to-source", 0),
+		connectedRouteForPathTest("198.51.100.0/30", "to-destination", 0),
+		staticRouteForPathTest("172.20.0.0/16", "198.51.100.2", "to-destination", 0),
+	}, []deviceInterfaceAddress{
+		interfaceAddressForPathTest("to-source", "192.0.2.2"),
+		interfaceAddressForPathTest("to-destination", "198.51.100.1"),
+	}, source, destination, 0)
+	destinationVDOM := routePathDeviceForTest("destination-id", "destination-fw", "root", []deviceRoute{
+		staticRouteForPathTest("10.10.0.0/16", "198.51.100.1", "to-core", 0),
+		connectedRouteForPathTest("198.51.100.0/30", "to-core", 0),
+		connectedRouteForPathTest("172.20.0.0/16", "server", 0),
+	}, []deviceInterfaceAddress{
+		interfaceAddressForPathTest("to-core", "198.51.100.2"),
+		interfaceAddressForPathTest("server", "172.20.0.1"),
+	}, source, destination, 0)
+	unrelated := routePathDeviceForTest("unrelated-id", "unrelated-fw", "root", []deviceRoute{
+		staticRouteForPathTest("10.10.0.0/16", "203.0.113.1", "left", 0),
+		staticRouteForPathTest("172.20.0.0/16", "203.0.113.2", "right", 0),
+	}, []deviceInterfaceAddress{
+		interfaceAddressForPathTest("left", "203.0.113.10"),
+		interfaceAddressForPathTest("right", "203.0.113.14"),
+	}, source, destination, 0)
+
+	path := deriveDeviceRoutePath([]deviceRouteResult{unrelated, destinationVDOM, sourceVDOM, transitVDOM}, source, destination, 0)
+	if path.Status != "complete" || !path.Complete || path.Message == "" {
+		t.Fatalf("path summary = %#v", path)
+	}
+	if path.SourceEndpoint == nil || path.SourceEndpoint.TargetID != "source-id" || path.DestinationEndpoint == nil || path.DestinationEndpoint.TargetID != "destination-id" {
+		t.Fatalf("path endpoints = %#v / %#v", path.SourceEndpoint, path.DestinationEndpoint)
+	}
+	if len(path.Hops) != 3 {
+		t.Fatalf("path hops = %#v", path.Hops)
+	}
+	wantIDs := []string{"source-id", "transit-id", "destination-id"}
+	wantRoles := []string{"source", "transit", "destination"}
+	wantIngress := []string{"", "to-source", "to-core"}
+	wantEgress := []string{"to-core", "to-destination", "server"}
+	wantNextHops := [][]string{{"192.0.2.2"}, {"198.51.100.2"}, {}}
+	for index, hop := range path.Hops {
+		if hop.Sequence != index+1 || hop.TargetID != wantIDs[index] || hop.Role != wantRoles[index] {
+			t.Fatalf("hop %d identity = %#v", index, hop)
+		}
+		if strings.Join(hop.IngressInterfaces, ",") != wantIngress[index] || strings.Join(hop.EgressInterfaces, ",") != wantEgress[index] {
+			t.Fatalf("hop %d interfaces = ingress %v, egress %v", index, hop.IngressInterfaces, hop.EgressInterfaces)
+		}
+		if strings.Join(hop.NextHops, ",") != strings.Join(wantNextHops[index], ",") {
+			t.Fatalf("hop %d next hops = %v, want %v", index, hop.NextHops, wantNextHops[index])
+		}
+		if len(hop.SelectedRoutes) == 0 {
+			t.Fatalf("hop %d has no selected routes: %#v", index, hop)
+		}
+	}
+	for _, hop := range path.Hops {
+		if hop.TargetID == "unrelated-id" {
+			t.Fatalf("unrelated route candidate leaked into path: %#v", path.Hops)
+		}
+	}
+}
+
+func TestDeriveDeviceRoutePathRejectsAmbiguousSourceVDOM(t *testing.T) {
+	source := netip.MustParsePrefix("10.10.1.0/24")
+	destination := netip.MustParsePrefix("172.20.1.0/24")
+	makeSource := func(id, name, address string) deviceRouteResult {
+		return routePathDeviceForTest(id, name, "root", []deviceRoute{
+			connectedRouteForPathTest("10.10.0.0/16", "lan", 0),
+			connectedRouteForPathTest("192.0.2.0/24", "transit", 0),
+			staticRouteForPathTest("172.20.0.0/16", "192.0.2.254", "transit", 0),
+		}, []deviceInterfaceAddress{interfaceAddressForPathTest("lan", address)}, source, destination, 0)
+	}
+	destinationVDOM := routePathDeviceForTest("destination-id", "destination-fw", "root", []deviceRoute{
+		connectedRouteForPathTest("172.20.0.0/16", "server", 0),
+	}, []deviceInterfaceAddress{interfaceAddressForPathTest("server", "172.20.0.1")}, source, destination, 0)
+
+	path := deriveDeviceRoutePath([]deviceRouteResult{
+		makeSource("source-a", "source-a", "10.10.0.1"),
+		makeSource("source-b", "source-b", "10.10.0.2"),
+		destinationVDOM,
+	}, source, destination, 0)
+	if path.Status != "ambiguous" || path.Complete || path.Message == "" || len(path.Hops) != 0 {
+		t.Fatalf("ambiguous path = %#v", path)
+	}
+}
+
+func TestDeriveDeviceRoutePathReportsUnresolvedNextHopWithoutIncludingRouteCandidates(t *testing.T) {
+	source := netip.MustParsePrefix("10.10.1.0/24")
+	destination := netip.MustParsePrefix("172.20.1.0/24")
+	sourceVDOM := routePathDeviceForTest("source-id", "source-fw", "root", []deviceRoute{
+		connectedRouteForPathTest("10.10.0.0/16", "lan", 0),
+		staticRouteForPathTest("172.20.0.0/16", "192.0.2.254", "wan", 0),
+	}, []deviceInterfaceAddress{interfaceAddressForPathTest("wan", "192.0.2.1")}, source, destination, 0)
+	unrelated := routePathDeviceForTest("unrelated-id", "unrelated-fw", "root", []deviceRoute{
+		staticRouteForPathTest("10.10.0.0/16", "203.0.113.1", "left", 0),
+		staticRouteForPathTest("172.20.0.0/16", "203.0.113.2", "right", 0),
+	}, nil, source, destination, 0)
+	destinationVDOM := routePathDeviceForTest("destination-id", "destination-fw", "root", []deviceRoute{
+		connectedRouteForPathTest("172.20.0.0/16", "server", 0),
+	}, []deviceInterfaceAddress{interfaceAddressForPathTest("server", "172.20.0.1")}, source, destination, 0)
+
+	path := deriveDeviceRoutePath([]deviceRouteResult{unrelated, destinationVDOM, sourceVDOM}, source, destination, 0)
+	if path.Status != "unresolved" || path.Complete || path.Message == "" || len(path.Hops) != 1 || path.Hops[0].TargetID != "source-id" {
+		t.Fatalf("unresolved path = %#v", path)
+	}
+}
+
+func TestDeriveDeviceRoutePathRejectsSharedTransitPrefix(t *testing.T) {
+	source := netip.MustParsePrefix("10.10.1.0/24")
+	destination := netip.MustParsePrefix("172.20.1.0/24")
+	sourceVDOM := routePathDeviceForTest("source-id", "source-fw", "root", []deviceRoute{
+		connectedRouteForPathTest("10.10.0.0/16", "lan", 0),
+		connectedRouteForPathTest("192.0.2.0/29", "transit", 0),
+		staticRouteForPathTest("172.20.0.0/16", "192.0.2.2", "transit", 0),
+	}, []deviceInterfaceAddress{interfaceAddressForPathTest("transit", "192.0.2.1")}, source, destination, 0)
+	destinationVDOM := routePathDeviceForTest("destination-id", "destination-fw", "root", []deviceRoute{
+		connectedRouteForPathTest("192.0.2.0/29", "transit", 0),
+		connectedRouteForPathTest("172.20.0.0/16", "server", 0),
+	}, []deviceInterfaceAddress{interfaceAddressForPathTest("transit", "192.0.2.2")}, source, destination, 0)
+	thirdParticipant := routePathDeviceForTest("third-id", "third-fw", "root", []deviceRoute{
+		connectedRouteForPathTest("192.0.2.0/29", "shared", 0),
+	}, []deviceInterfaceAddress{interfaceAddressForPathTest("shared", "192.0.2.3")}, source, destination, 0)
+
+	path := deriveDeviceRoutePath([]deviceRouteResult{destinationVDOM, thirdParticipant, sourceVDOM}, source, destination, 0)
+	if path.Status != "ambiguous" || path.Complete || len(path.Hops) != 1 || path.Hops[0].TargetID != "source-id" {
+		t.Fatalf("shared transit prefix path = %#v", path)
+	}
+}
+
+func TestDirectlyConnectedNetworkRequiresCompleteCIDRCoverage(t *testing.T) {
+	query := netip.MustParsePrefix("10.0.0.0/8")
+	partial := []deviceRoute{connectedRouteForPathTest("10.0.0.0/9", "left", 0)}
+	if directlyConnectedNetwork(partial, query, 0) {
+		t.Fatal("a partially connected source network was accepted as a VDOM owner")
+	}
+	complete := append(partial, connectedRouteForPathTest("10.128.0.0/9", "right", 0))
+	if !directlyConnectedNetwork(complete, query, 0) {
+		t.Fatal("two directly connected partitions covering the source network were not accepted")
+	}
+	if directlyConnectedNetwork(complete, query, 7) {
+		t.Fatal("connected routes from another VRF were accepted")
+	}
+	shadowed := append(append([]deviceRoute{}, complete...), staticRouteForPathTest("10.64.0.0/10", "192.0.2.1", "override", 0))
+	if directlyConnectedNetwork(shadowed, query, 0) {
+		t.Fatal("a more-specific non-connected route was ignored while identifying a VDOM owner")
+	}
+	blackhole := connectedRouteForPathTest("10.64.0.0/10", "", 0)
+	blackhole.Blackhole = true
+	shadowed[len(shadowed)-1] = blackhole
+	if directlyConnectedNetwork(shadowed, query, 0) {
+		t.Fatal("a more-specific blackhole route was ignored while identifying a VDOM owner")
+	}
+}
+
 func TestParseRoutingNetwork(t *testing.T) {
 	tests := map[string]string{
 		"10.1.2.3":               "10.1.2.3/32",
@@ -238,6 +436,87 @@ func TestReadFortiGateRoutesUsesBearerVDOMAndExactMonitorEndpoint(t *testing.T) 
 	}
 }
 
+func TestReadFortiGateInterfaceAddressesUsesExactConfiguredIPs(t *testing.T) {
+	t.Setenv("FGT_RUNTIME_TOKEN", "routing-secret")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v2/cmdb/system/interface" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("vdom") != "root" || r.Header.Get("Authorization") != "Bearer routing-secret" {
+			t.Errorf("query/header = %q %q", r.URL.RawQuery, r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "size": 1, "matched_count": 1, "results": []any{
+			map[string]any{
+				"name": "vdom-link", "vrf": 7, "ip": "192.0.2.2 255.255.255.252",
+				"secondaryip": []any{map[string]any{"id": 1, "ip": "198.51.100.2/30"}},
+				"ipv6": map[string]any{
+					"ip6-address":    "2001:db8::2/64",
+					"ip6-extra-addr": []any{map[string]any{"prefix": "2001:db8:1::2/64"}},
+				},
+			},
+		}})
+	}))
+	defer server.Close()
+	target := runtimeTestTarget(t, server)
+
+	ipv4, err := readFortiGateInterfaceAddresses(context.Background(), target, 32)
+	if err != nil || len(ipv4) != 2 || ipv4[0].VRF != 7 || ipv4[0].Interface != "vdom-link" || ipv4[0].Address.String() != "192.0.2.2" || ipv4[1].Address.String() != "198.51.100.2" {
+		t.Fatalf("IPv4 interface addresses = %#v, %v", ipv4, err)
+	}
+	ipv6, err := readFortiGateInterfaceAddresses(context.Background(), target, 128)
+	if err != nil || len(ipv6) != 2 || ipv6[0].Address.String() != "2001:db8::2" || ipv6[1].Address.String() != "2001:db8:1::2" {
+		t.Fatalf("IPv6 interface addresses = %#v, %v", ipv6, err)
+	}
+}
+
+func TestConfiguredInterfaceAddressParsingIsStrict(t *testing.T) {
+	for name, test := range map[string]struct {
+		value     any
+		bitLength int
+		address   string
+		prefix    string
+	}{
+		"IPv4 string": {"192.0.2.2 255.255.255.252", 32, "192.0.2.2", "192.0.2.0/30"},
+		"IPv4 array":  {[]any{"198.51.100.2", "255.255.255.0"}, 32, "198.51.100.2", "198.51.100.0/24"},
+		"IPv6 prefix": {"2001:db8::2/64", 128, "2001:db8::2", "2001:db8::/64"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			address, prefix, present, err := parseConfiguredInterfaceAddress(test.value, test.bitLength)
+			if err != nil || !present || address.String() != test.address || prefix.String() != test.prefix {
+				t.Fatalf("parsed address = %s %s present=%t err=%v", address, prefix, present, err)
+			}
+		})
+	}
+	for name, value := range map[string]any{
+		"object":              map[string]any{"address": "192.0.2.1"},
+		"non-contiguous mask": "192.0.2.1 255.0.255.0",
+		"wrong family":        "2001:db8::1/64",
+		"too many fields":     "192.0.2.1 255.255.255.0 unexpected",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, _, err := parseConfiguredInterfaceAddress(value, 32); err == nil {
+				t.Fatalf("malformed address %#v was accepted", value)
+			}
+		})
+	}
+	if _, _, present, err := parseConfiguredInterfaceAddress("fe80::1/64", 128); err != nil || present {
+		t.Fatalf("unscoped link-local address was accepted: present=%t err=%v", present, err)
+	}
+}
+
+func TestReadFortiGateInterfaceAddressesRejectsUnprovenSnapshot(t *testing.T) {
+	t.Setenv("FGT_RUNTIME_TOKEN", "routing-secret")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "results": []any{
+			map[string]any{"name": "port1", "ip": "192.0.2.1 255.255.255.0"},
+		}})
+	}))
+	defer server.Close()
+	if _, err := readFortiGateInterfaceAddresses(context.Background(), runtimeTestTarget(t, server), 32); err == nil {
+		t.Fatal("an interface response without completeness metadata was accepted")
+	}
+}
+
 func TestReadFortiGateRoutesUsesIPv6MonitorEndpoint(t *testing.T) {
 	t.Setenv("FGT_RUNTIME_TOKEN", "routing-secret")
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -324,17 +603,24 @@ func TestDeviceRoutesHandlerEnforcesRoleBeforeContactingDevices(t *testing.T) {
 	}
 }
 
-func TestDeviceRoutesHandlerReturnsEffectiveCandidate(t *testing.T) {
+func TestDeviceRoutesHandlerReturnsConnectedPath(t *testing.T) {
 	t.Setenv("FGT_RUNTIME_TOKEN", "routing-secret")
 	s := workflowTestState(t)
 	if err := s.publishPolicy(validEditablePolicy()); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/cmdb/system/interface" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "size": 2, "matched_count": 2, "results": []any{
+				map[string]any{"name": "inside", "ip": "10.0.0.1 255.0.0.0", "vrf": 0},
+				map[string]any{"name": "outside", "ip": "172.16.0.1/16", "vrf": 0},
+			}})
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "results": []any{
 			map[string]any{"ip_mask": "0.0.0.0/0", "gateway": "192.0.2.1", "interface": "wan", "type": "static", "vrf": 0},
 			map[string]any{"ip_mask": "10.0.0.0/8", "interface": "inside", "type": "connected", "vrf": 0},
-			map[string]any{"ip_mask": "172.16.0.0/16", "gateway": "192.0.2.2", "interface": "outside", "type": "static", "vrf": 0},
+			map[string]any{"ip_mask": "172.16.0.0/16", "interface": "outside", "type": "connected", "vrf": 0},
 			map[string]any{"ip_mask": "10.0.0.0/8", "interface": "vrf7-inside", "type": "connected", "vrf": 7},
 			map[string]any{"ip_mask": "172.16.0.0/16", "blackhole": true, "type": "blackhole", "vrf": 7},
 		}})
@@ -355,7 +641,13 @@ func TestDeviceRoutesHandlerReturnsEffectiveCandidate(t *testing.T) {
 	if !analysis.Success || analysis.Status != "complete" || analysis.VRF != 0 || !analysis.Complete || analysis.Partial || len(analysis.AffectedFirewalls) != 1 || analysis.AffectedFirewalls[0] != "edge" {
 		t.Fatalf("analysis summary = %#v", analysis)
 	}
-	if len(analysis.Devices) != 1 || analysis.Devices[0].Assessment != "endpoint_candidate" || !analysis.Devices[0].Affected {
+	if analysis.PathStatus != "complete" || !analysis.PathComplete || !analysis.PathOrderingAvailable || len(analysis.RoutePath) != 1 || analysis.RoutePath[0].Role != "source_destination" {
+		t.Fatalf("routing path = %#v", analysis)
+	}
+	if analysis.SourceEndpoint == nil || analysis.DestinationEndpoint == nil || analysis.SourceEndpoint.TargetID != analysis.DestinationEndpoint.TargetID {
+		t.Fatalf("routing endpoints = %#v / %#v", analysis.SourceEndpoint, analysis.DestinationEndpoint)
+	}
+	if len(analysis.Devices) != 1 || analysis.Devices[0].Assessment != "path_source_destination" || !analysis.Devices[0].Affected {
 		t.Fatalf("device analysis = %#v", analysis.Devices)
 	}
 	if len(analysis.Devices[0].SourceRoutes) != 1 || analysis.Devices[0].SourceRoutes[0].Network != "10.0.0.0/8" ||
@@ -372,7 +664,7 @@ func TestDeviceRoutesHandlerReturnsEffectiveCandidate(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&analysis); err != nil {
 		t.Fatal(err)
 	}
-	if analysis.VRF != 7 || len(analysis.Devices) != 1 || analysis.Devices[0].Assessment != "drop_candidate" || !analysis.Devices[0].Affected {
+	if analysis.VRF != 7 || analysis.PathStatus != "not_found" || analysis.PathComplete || len(analysis.Devices) != 1 || analysis.Devices[0].Assessment != "not_on_path" || analysis.Devices[0].Affected {
 		t.Fatalf("VRF 7 analysis = %#v", analysis)
 	}
 }
