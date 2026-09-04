@@ -1,9 +1,42 @@
 package backend
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
+
+func TestAdaptNameIPIncludesPolicyName(t *testing.T) {
+	dataDir := t.TempDir()
+	currentDir := filepath.Join(dataDir, "current")
+	if err := os.MkdirAll(currentDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(currentDir, "POLICY"), []byte("# p-test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c := newCache(dataDir, 8)
+	c.getOwnerEntry("p-test", "network-team").natSet = map[string]bool{}
+	s := &state{cache: c, config: &config{NetspocData: dataDir}}
+	request := httptest.NewRequest(http.MethodGet,
+		"/?active_owner=network-team&display_property=name", nil)
+
+	records := s.adaptNameIP(request, "web", []*rule{{
+		Action: "permit", PolicyName: "ALLOW_WEB",
+		Src: []string{"network:clients"}, Dst: []string{"host:web"},
+		Prt: []string{"tcp 443"},
+	}})
+	if len(records) != 1 {
+		t.Fatalf("rule records = %d, want 1", len(records))
+	}
+	if got := records[0]["policy_name"]; got != "ALLOW_WEB" {
+		t.Fatalf("policy_name = %#v, want %q", got, "ALLOW_WEB")
+	}
+}
 
 func TestName2IPDoesNotMutateCachedObjectForNAT(t *testing.T) {
 	const (

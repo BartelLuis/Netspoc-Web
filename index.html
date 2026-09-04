@@ -41,8 +41,30 @@
 			float: left;
 		}
 
-		#login-form {
+		.auth-form {
 			float: right;
+			width: min(460px, 100%);
+		}
+
+		.auth-form label {
+			display: block;
+			margin: .55rem 0;
+		}
+
+		.auth-form input:not([type="submit"]) {
+			box-sizing: border-box;
+			width: 100%;
+			margin-top: .2rem;
+			padding: .45rem;
+		}
+
+		#setup-message {
+			min-height: 1.25rem;
+			margin-top: .55rem;
+		}
+
+		#setup-message.error {
+			color: #a01818;
 		}
 
 		#unten {
@@ -64,7 +86,7 @@
 	<link rel="icon" type="image/vnd.microsoft.icon" href="resources/images/policyweb.ico">
 </head>
 
-<body onload="document.getElementsByName('email')[0].focus();">
+<body>
 	<div id="links">
 		<div class="pw-page-heading">
 			<h1>Policy-Web</h1>
@@ -72,7 +94,7 @@
 		</div>
 	</div>
 
-	<form action="backend6/login" method="post" id="login-form">
+	<form action="backend6/login" method="post" id="login-form" class="auth-form">
 		<fieldset>
 			<legend class="small">Anmelden</legend>
 			<input name="app" type="hidden" value="../app.html" />
@@ -83,6 +105,22 @@
 			<input id="btn_login" type="submit" value="Login">
 			<div class="small">Neues <a href="passwd.html">Kennwort anfordern</a></div>
 			<div class="small"><a href="ldap-login.html">Anmeldung über LDAP</a></div>
+		</fieldset>
+	</form>
+	<form id="setup-form" class="auth-form" hidden>
+		<fieldset>
+			<legend class="small">Sichere Ersteinrichtung</legend>
+			<p class="small">Legen Sie einmalig das erste lokale Administratorkonto an. Danach wird diese Einrichtung dauerhaft gesperrt.</p>
+			<label for="setup-token">Bootstrap-Token
+				<input id="setup-token" type="password" maxlength="4096" autocomplete="one-time-code" required></label>
+			<label for="setup-email">Admin-E-Mail
+				<input id="setup-email" type="email" maxlength="254" autocomplete="username" required></label>
+			<label for="setup-password">Neues Kennwort
+				<input id="setup-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required></label>
+			<label for="setup-password-confirmation">Kennwort wiederholen
+				<input id="setup-password-confirmation" type="password" minlength="12" maxlength="256" autocomplete="new-password" required></label>
+			<input id="setup-submit" type="submit" value="Ersteinrichtung abschließen">
+			<div id="setup-message" class="small" role="status" aria-live="polite"></div>
 		</fieldset>
 	</form>
 	<div id="maintenance-banner" role="status" hidden></div>
@@ -96,6 +134,80 @@
 
 	<iframe src="start.html" class="flex-container" title="Basisinformationen und Changelog"></iframe>
 	<script>
+		const loginForm = document.getElementById('login-form');
+		const setupForm = document.getElementById('setup-form');
+		const setupMessage = document.getElementById('setup-message');
+
+		function showSetupMessage(message, isError) {
+			setupMessage.textContent = message || '';
+			setupMessage.className = 'small' + (isError ? ' error' : '');
+		}
+
+		fetch('backend6/admin/status', { cache: 'no-store', credentials: 'same-origin' })
+			.then(response => response.ok ? response.json() : Promise.reject(new Error(response.statusText)))
+			.then(status => {
+				if (status.initialized) {
+					loginForm.hidden = false;
+					setupForm.hidden = true;
+					document.getElementById('txtf_email').focus();
+					return;
+				}
+				loginForm.hidden = true;
+				setupForm.hidden = false;
+				document.getElementById('setup-token').focus();
+			})
+			.catch(() => {
+				loginForm.hidden = false;
+				document.getElementById('txtf_email').focus();
+			});
+
+		setupForm.addEventListener('submit', async event => {
+			event.preventDefault();
+			showSetupMessage('', false);
+			const token = document.getElementById('setup-token');
+			const email = document.getElementById('setup-email');
+			const password = document.getElementById('setup-password');
+			const confirmation = document.getElementById('setup-password-confirmation');
+			const submit = document.getElementById('setup-submit');
+			if (password.value !== confirmation.value) {
+				showSetupMessage('Die Kennwörter stimmen nicht überein.', true);
+				confirmation.focus();
+				return;
+			}
+			submit.disabled = true;
+			try {
+				const response = await fetch('backend6/setup', {
+					method: 'POST',
+					cache: 'no-store',
+					credentials: 'same-origin',
+					headers: {
+						'Accept': 'application/json',
+						'Content-Type': 'application/json',
+						'X-PolicyWeb-Bootstrap-Token': token.value
+					},
+					body: JSON.stringify({
+						email: email.value,
+						password: password.value,
+						password_confirmation: confirmation.value
+					})
+				});
+				let result = {};
+				try { result = await response.json(); } catch (_) {}
+				if (!response.ok || result.success === false) {
+					throw new Error(result.msg || 'Die Ersteinrichtung ist fehlgeschlagen.');
+				}
+				showSetupMessage('Ersteinrichtung abgeschlossen. Die Anwendung wird geöffnet.', false);
+				window.location.assign('app.html');
+			} catch (error) {
+				showSetupMessage(error.message, true);
+			} finally {
+				token.value = '';
+				password.value = '';
+				confirmation.value = '';
+				submit.disabled = false;
+			}
+		});
+
 		fetch('backend6/maintenance-status', { cache: 'no-store' })
 			.then(response => response.ok ? response.json() : Promise.reject(new Error(response.statusText)))
 			.then(status => {

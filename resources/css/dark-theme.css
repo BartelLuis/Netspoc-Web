@@ -34,7 +34,9 @@ html[data-theme="dark"] noscript {
     color: var(--pw-text-muted);
 }
 
-html[data-theme="dark"] .pw-admin-frame {
+html[data-theme="dark"] .pw-admin-frame,
+html[data-theme="dark"] .pw-devices-frame,
+html[data-theme="dark"] .pw-requests-frame {
     background-color: var(--pw-bg) !important;
 }
 

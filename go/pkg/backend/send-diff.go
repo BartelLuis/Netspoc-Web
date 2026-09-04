@@ -45,6 +45,13 @@ func SendDiff() {
 		if !strings.Contains(email, "@") {
 			continue
 		}
+		if _, canonicalErr := canonicalAccountEmail(email); canonicalErr == nil {
+			if _, active := s.activeAccount(email); !active {
+				continue
+			}
+		} else if !strings.HasPrefix(strings.ToLower(email), "[all]@") {
+			continue
+		}
 		wildcard := "[all]@" + email[strings.Index(email, "@")+1:]
 		valid := make(map[string]bool)
 

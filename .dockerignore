@@ -8,14 +8,10 @@
 .vscode
 t
 mail
-html
-Browserstack-logo.svg
 Changes
 LICENSE
-Makefile
 dist.ini
 tidyall.ini
-test-harness*
 go/cmd/*/delete-obsolete-users
 go/cmd/*/server
 go/cmd/*/test-server

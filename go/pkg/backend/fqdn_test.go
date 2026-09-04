@@ -88,6 +88,7 @@ func TestPublishFQDNForOwnerAndRuleView(t *testing.T) {
 		config: &config{NetspocData: filepath.Join(root, "policies"), UserDir: filepath.Join(root, "users")},
 		cache:  newCache(filepath.Join(root, "policies"), 8),
 	}
+	seedPolicyTestAccounts(t, s, p.Users...)
 	if err := s.publishPolicy(p); err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +149,7 @@ func TestFQDNValueCanBeSearched(t *testing.T) {
 		cache:  newCache(filepath.Join(root, "policies"), 8),
 	}
 	p := policyWithFQDN()
+	seedPolicyTestAccounts(t, s, p.Users...)
 	if err := validateEditablePolicy(p); err != nil {
 		t.Fatal(err)
 	}

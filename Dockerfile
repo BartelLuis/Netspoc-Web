@@ -22,14 +22,20 @@ RUN test -x /usr/local/bin/policyweb -a -x /usr/local/bin/policyweb-create-user
 COPY --chown=policyweb:policyweb app /srv/policyweb/app
 COPY --chown=policyweb:policyweb htdocs/extjs4 /srv/policyweb/extjs4
 COPY --chown=policyweb:policyweb htdocs/silk-icons /srv/policyweb/silk-icons
+COPY --chown=policyweb:policyweb html /srv/policyweb/html
 COPY --chown=policyweb:policyweb resources /srv/policyweb/resources
 COPY --chown=policyweb:policyweb go/pkg/backend/mail-templates /srv/policyweb/templates/mail
 COPY --chown=policyweb:policyweb go/pkg/backend/html-templates /srv/policyweb/templates/html
-COPY --chown=policyweb:policyweb app.html admin.html index.html ldap-login.html start.html CHANGELOG.md passwd.html /srv/policyweb/
+COPY --chown=policyweb:policyweb app.html admin.html devices.html requests.html index.html ldap-login.html start.html CHANGELOG.md passwd.html /srv/policyweb/
 RUN test -f /srv/policyweb/app.html \
 	-a -f /srv/policyweb/start.html \
 	-a -f /srv/policyweb/ldap-login.html \
+	-a -f /srv/policyweb/devices.html \
+	-a -f /srv/policyweb/requests.html \
     -a -f /srv/policyweb/CHANGELOG.md \
+    -a -f /srv/policyweb/html/ip_search_tooltip \
+    -a -f /srv/policyweb/html/ip_search_proto_tooltip \
+    -a -f /srv/policyweb/html/task_mail_info_text \
     -a -f /srv/policyweb/extjs4/ext-all.js \
     -a -f /srv/policyweb/app/Application.js
 

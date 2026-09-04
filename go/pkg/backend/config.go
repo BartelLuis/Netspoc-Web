@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -16,9 +17,10 @@ import (
 	"unicode/utf8"
 )
 
-// FortinetTarget describes a FortiGate or FortiManager API endpoint. Secrets are
-// deliberately referenced through environment variables so they never have to
-// be stored in policyweb.conf.
+// FortinetTarget describes a FortiGate or FortiManager API endpoint. Static
+// target secrets are referenced through environment variables. Web-managed
+// target secrets use the unexported runtime fields populated by the server-side
+// credential store, so neither kind has to be stored in policyweb.conf.
 type FortinetTarget struct {
 	Name               string            `json:"name"`
 	Type               string            `json:"type"`
@@ -35,6 +37,9 @@ type FortinetTarget struct {
 	PasswordEnv        string            `json:"password_env,omitempty"`
 	CAFile             string            `json:"ca_file,omitempty"`
 	InsecureSkipVerify bool              `json:"insecure_skip_verify,omitempty"`
+	managedID          string
+	managedToken       string
+	managedCAPEM       string
 }
 
 func (t FortinetTarget) validate() error {
@@ -129,17 +134,26 @@ func (t FortinetTarget) httpClient() (*http.Client, error) {
 		return nil, fmt.Errorf("insecure_skip_verify is forbidden for authenticated Fortinet requests")
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: t.InsecureSkipVerify} // #nosec G402 -- explicit administrator opt-in
+	var certificates [][]byte
 	if t.CAFile != "" {
-		pem, err := os.ReadFile(t.CAFile)
+		pemData, err := os.ReadFile(t.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("read ca_file: %w", err)
 		}
+		certificates = append(certificates, pemData)
+	}
+	if t.managedCAPEM != "" {
+		certificates = append(certificates, []byte(t.managedCAPEM))
+	}
+	if len(certificates) != 0 {
 		pool, err := x509.SystemCertPool()
 		if err != nil {
 			pool = x509.NewCertPool()
 		}
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("ca_file contains no certificates")
+		for _, pemData := range certificates {
+			if !pool.AppendCertsFromPEM(pemData) {
+				return nil, fmt.Errorf("configured CA data contains no certificates")
+			}
 		}
 		tlsConfig.RootCAs = pool
 	}
@@ -147,6 +161,19 @@ func (t FortinetTarget) httpClient() (*http.Client, error) {
 		Transport: &http.Transport{TLSClientConfig: tlsConfig}, Timeout: 15 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 	}, nil
+}
+
+func (t FortinetTarget) apiToken() (string, error) {
+	if t.managedToken != "" {
+		return t.managedToken, nil
+	}
+	if t.TokenEnv == "" {
+		return "", errors.New("FortiGate API token is not configured")
+	}
+	if token := os.Getenv(t.TokenEnv); token != "" {
+		return token, nil
+	}
+	return "", fmt.Errorf("environment variable %s is empty", t.TokenEnv)
 }
 
 type config struct {
@@ -167,6 +194,7 @@ type config struct {
 	BusinessUnits       []string         `json:"business_units"`
 	AboutInfoTemplate   string           `json:"about_info_template"`
 	FortinetTargets     []FortinetTarget `json:"fortinet_targets,omitempty"`
+	FortiGateReadOnly   bool             `json:"-"`
 	MaintenanceMode     bool             `json:"maintenance_mode,omitempty"`
 	MaintenanceMessage  string           `json:"maintenance_message,omitempty"`
 	LdapURI             string           `json:"ldap_uri,omitempty"`
@@ -208,6 +236,11 @@ func LoadConfig() *config {
 	c.LdapEmailAttr = "mail"
 	c.LdapIDAttr = "entryUUID"
 	c.LdapSyncFilter = "(objectClass=person)"
+	fortiGateReadOnly, err := fortiGateReadOnlySetting()
+	if err != nil {
+		abort("Invalid FortiGate read-only setting: %v", err)
+	}
+	c.FortiGateReadOnly = fortiGateReadOnly
 
 	// Override with config file
 	if err := json.Unmarshal(data, &c); err != nil {
@@ -331,6 +364,22 @@ func LoadConfig() *config {
 		}
 	}
 	return &c
+}
+
+const fortiGateReadOnlyEnv = "POLICYWEB_FORTIGATE_READ_ONLY"
+
+func fortiGateReadOnlySetting() (bool, error) {
+	value := strings.TrimSpace(os.Getenv(fortiGateReadOnlyEnv))
+	switch strings.ToLower(value) {
+	case "":
+		return false, nil
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s must be true or false", fortiGateReadOnlyEnv)
+	}
 }
 
 // normalizedPublicBaseURL validates the externally visible origin used in

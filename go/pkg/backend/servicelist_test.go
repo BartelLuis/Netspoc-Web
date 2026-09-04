@@ -25,7 +25,9 @@ func TestSelectServicesMatchesExplicitRuleEndpoints(t *testing.T) {
 		},
 		cache: newCache(filepath.Join(root, "policies"), 8),
 	}
-	if err := s.publishPolicy(validEditablePolicy()); err != nil {
+	p := validEditablePolicy()
+	seedPolicyTestAccounts(t, s, p.Users...)
+	if err := s.publishPolicy(p); err != nil {
 		t.Fatal(err)
 	}
 

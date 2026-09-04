@@ -1672,6 +1672,7 @@ func TestLegacyFullReconciliationUsesEmptyRuntimeBaseline(t *testing.T) {
 
 func TestAdminDeployPublishedRevisionAndProtocol(t *testing.T) {
 	t.Setenv("FGT_RUNTIME_TOKEN", "runtime-secret")
+	t.Setenv(fortiGateReadOnlyEnv, "false")
 	fake := newFakeFortiGate("v7.4.12")
 	fake.objects["/api/v2/cmdb/firewall/policy"] = []map[string]any{{"policyid": 999, "name": "policyweb-anchor", "action": "deny"}}
 	server := httptest.NewTLSServer(fake)
@@ -1685,6 +1686,7 @@ func TestAdminDeployPublishedRevisionAndProtocol(t *testing.T) {
 	s := &state{config: &config{NetspocData: dataDir, UserDir: filepath.Join(root, "users"), FortinetTargets: []FortinetTarget{target}}, cache: newCache(dataDir, 8)}
 	p := deployableNamingPolicy(t)
 	p.Users = []editableUser{{Email: "admin@example.net", Role: "admin", Active: true}}
+	seedPolicyTestAccounts(t, s, p.Users...)
 	plan := generateDeploymentPlanWithBase(nil, p, s.config.FortinetTargets)
 	if !plan.Ready {
 		t.Fatalf("test plan is not ready: %#v", plan.Errors)
@@ -1746,6 +1748,30 @@ func TestAdminDeployPublishedRevisionAndProtocol(t *testing.T) {
 		t.Fatalf("new policy was not allocated and placed before anchor: %#v", policies)
 	}
 
+	// The operational kill switch blocks before a second protocol or any
+	// device request is started, without changing the approved plan hash.
+	requestsBefore := len(fake.requests)
+	s.config.FortiGateReadOnly = true
+	body, _ = json.Marshal(deployRequest{PolicyID: version, PlanHash: plan.Hash, Confirm: true})
+	request = httptest.NewRequest(http.MethodPost, "/admin/deploy", bytes.NewReader(body))
+	request = request.WithContext(context.WithValue(request.Context(), sessionContextKey{}, session))
+	response = httptest.NewRecorder()
+	s.adminDeploy(response, request)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), errFortiGateReadOnly.Error()) {
+		t.Fatalf("read-only deploy status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(fake.requests) != requestsBefore {
+		t.Fatalf("read-only deployment contacted FortiGate: before=%d after=%d", requestsBefore, len(fake.requests))
+	}
+	var deploymentCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM policy_deployment_log`).Scan(&deploymentCount); err != nil {
+		t.Fatal(err)
+	}
+	if deploymentCount != 1 {
+		t.Fatalf("deployment protocols after read-only block = %d, want 1", deploymentCount)
+	}
+	s.config.FortiGateReadOnly = false
+
 	// A historical delta is never a rollback mechanism. Once another revision
 	// is published, the old revision must be rejected before any device call.
 	newVersion := "p-runtime-test-newer"
@@ -1759,7 +1785,7 @@ func TestAdminDeployPublishedRevisionAndProtocol(t *testing.T) {
 	if err := s.markRevisionPublishedBy(newVersion, "reviewer@example.net"); err != nil {
 		t.Fatal(err)
 	}
-	requestsBefore := len(fake.requests)
+	requestsBefore = len(fake.requests)
 	body, _ = json.Marshal(deployRequest{PolicyID: version, PlanHash: plan.Hash, Confirm: true})
 	request = httptest.NewRequest(http.MethodPost, "/admin/deploy", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), sessionContextKey{}, session))

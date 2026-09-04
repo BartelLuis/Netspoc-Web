@@ -92,6 +92,10 @@ var appstate = (
                 return history.date;
             }
         };
+        state.isCurrentPolicy = function () {
+            return history.current === true || history.current === 1 ||
+                history.current === '1' || history.current === 'true';
+        };
         state.getNetworks = function () {
             return networks;
         };

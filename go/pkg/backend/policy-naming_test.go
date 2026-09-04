@@ -24,6 +24,68 @@ func namingTestPolicy(contextType string) *editablePolicy {
 	return p
 }
 
+func TestManualPolicyNameIsValidatedAndPreserved(t *testing.T) {
+	p := namingTestPolicy("dedicated")
+	rule := &p.Services[0].Rules[0]
+	rule.PolicyName = "  WEB-Allow_443  "
+	if err := prepareManualPolicyNames(p); err != nil {
+		t.Fatal(err)
+	}
+	if rule.PolicyName != "WEB-Allow_443" {
+		t.Fatalf("manual rule name was changed to %q", rule.PolicyName)
+	}
+	if !stableIDRE.MatchString(rule.StableRuleID) || !shortIDRE.MatchString(rule.ShortID) {
+		t.Fatalf("server identity was not prepared: %#v", rule)
+	}
+}
+
+func TestManualPolicyNameRejectsUnsafeValues(t *testing.T) {
+	values := []string{"", "   ", strings.Repeat("A", 36), "-leading", "has space", "name.with.dot", "name;delete", "règle"}
+	for _, value := range values {
+		t.Run(value, func(t *testing.T) {
+			p := namingTestPolicy("dedicated")
+			p.Services[0].Rules[0].PolicyName = value
+			if err := prepareManualPolicyNames(p); err == nil {
+				t.Fatalf("unsafe manual name %q was accepted", value)
+			}
+		})
+	}
+}
+
+func TestManualPolicyNamesAreCaseInsensitiveUniquePerDeploymentBinding(t *testing.T) {
+	p := namingTestPolicy("dedicated")
+	first := &p.Services[0].Rules[0]
+	first.PolicyName = "WEB-Allow"
+	second := *first
+	second.StableRuleID = "123e4567-e89b-42d3-a456-426614174001"
+	second.ShortID = ""
+	second.PolicyName = "web-allow"
+	p.Services[0].Rules = append(p.Services[0].Rules, second)
+	if err := prepareManualPolicyNames(p); err == nil || !strings.Contains(err.Error(), "bereits vergeben") {
+		t.Fatalf("case-insensitive duplicate name was accepted: %v", err)
+	}
+}
+
+func TestManualRuleProtectionKeepsNameEditableAndIdentityServerOwned(t *testing.T) {
+	current := namingTestPolicy("dedicated")
+	current.Services[0].Rules[0].PolicyName = "OLD_NAME"
+	current.Services[0].Rules[0].ShortID = "ABCDE"
+	current.Services[0].Rules[0].PolicyComment = "legacy comment"
+	current.Services[0].Rules[0].NamingVersion = "fortigate-v1"
+	next := cloneEditablePolicy(t, current)
+	next.Services[0].Rules[0].PolicyName = "NEW_NAME"
+	next.Services[0].Rules[0].ShortID = "FFFFF"
+	next.Services[0].Rules[0].PolicyComment = "client controlled"
+	protectManualRuleIdentities(current, next)
+	rule := next.Services[0].Rules[0]
+	if rule.PolicyName != "NEW_NAME" {
+		t.Fatalf("manual name was overwritten: %#v", rule)
+	}
+	if rule.ShortID != "ABCDE" || rule.PolicyComment != "legacy comment" || rule.NamingVersion != "fortigate-v1" {
+		t.Fatalf("server-owned metadata was accepted from the client: %#v", rule)
+	}
+}
+
 func TestGenerateDedicatedPolicyNameIsStable(t *testing.T) {
 	p := namingTestPolicy("dedicated")
 	if err := derivePolicyNames(p); err != nil {

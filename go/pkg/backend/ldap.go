@@ -182,7 +182,7 @@ func ldapPolicyLoginUser(p *editablePolicy, identity ldapIdentity, maintenanceAc
 	if user == nil || !user.Active {
 		return nil, errors.New("LDAP identity is not active in the authorization policy")
 	}
-	if maintenanceActive && policyRole(p, user.Email) != "admin" {
+	if maintenanceActive && !hasPolicyRole(p, user.Email, "admin") {
 		return nil, errLDAPMaintenanceLogin
 	}
 	return user, nil
@@ -209,7 +209,7 @@ func (s *state) ldapLoginHandler(w http.ResponseWriter, r *http.Request) {
 	user, err := ldapPolicyLoginUser(s.authorizationPolicy(), identity, maintenanceActive)
 	if err != nil {
 		if errors.Is(err, errLDAPMaintenanceLogin) {
-			writeHTMLError(w, "Das System befindet sich im Wartungsmodus. Die Anmeldung ist nur für Administratoren möglich.")
+			writeHTMLError(w, "Das System befindet sich im Wartungsmodus. Die Anmeldung ist nur für Administratoren und Developer möglich.")
 			return
 		}
 		s.setAttack(r)
@@ -228,7 +228,7 @@ func (s *state) ldapLoginHandler(w http.ResponseWriter, r *http.Request) {
 	user, err = ldapPolicyLoginUser(s.authorizationPolicy(), identity, maintenanceActive)
 	if err != nil {
 		if errors.Is(err, errLDAPMaintenanceLogin) {
-			writeHTMLError(w, "Das System befindet sich im Wartungsmodus. Die Anmeldung ist nur für Administratoren möglich.")
+			writeHTMLError(w, "Das System befindet sich im Wartungsmodus. Die Anmeldung ist nur für Administratoren und Developer möglich.")
 			return
 		}
 		s.setAttack(r)
@@ -259,12 +259,12 @@ func (s *state) adminLDAPSync(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Confirm      bool   `json:"confirm"`
 		PreviewToken string `json:"preview_token"`
+		UsersVersion *int64 `json:"users_version"`
 	}
-	var current *editablePolicy
 	err := decodeJSONRequest(w, r, 1<<20, &request)
 	failureStatus := http.StatusBadRequest
-	if err == nil && (!request.Confirm || strings.TrimSpace(request.PreviewToken) == "") {
-		err = errors.New("confirm=true and preview_token are required")
+	if err == nil && (!request.Confirm || strings.TrimSpace(request.PreviewToken) == "" || request.UsersVersion == nil) {
+		err = errors.New("confirm=true, preview_token and users_version are required")
 	}
 	var preview storedLDAPSyncPreview
 	if err == nil {
@@ -273,34 +273,25 @@ func (s *state) adminLDAPSync(w http.ResponseWriter, r *http.Request) {
 			failureStatus = http.StatusInternalServerError
 		}
 	}
-	var meta draftMetadata
+	var usersVersion int64
 	if err == nil {
-		meta, err = s.draftInfo()
+		_, usersVersion, err = s.accountCatalog()
 		if err != nil {
 			failureStatus = http.StatusInternalServerError
 		}
-		if err == nil && meta.Version != preview.DraftVersion {
+		if err == nil && (usersVersion != preview.UsersVersion || *request.UsersVersion != preview.UsersVersion) {
 			err = errLDAPPreviewStale
 			failureStatus = http.StatusConflict
 		}
 	}
+	var users []editableUser
 	if err == nil {
-		current, err = s.loadPolicyDraft()
-		if err != nil {
-			failureStatus = http.StatusInternalServerError
-		}
-	}
-	if err == nil {
-		current.Users = append([]editableUser(nil), preview.Users...)
-		err = validateEditablePolicy(current)
-	}
-	if err == nil {
-		expected := preview.DraftVersion
-		meta, err = s.saveDraftAs(current, actor, &expected)
-		if errors.Is(err, errDraftConflict) {
+		users, usersVersion, err = s.applyLDAPAccountPreview(actor, preview.UsersVersion, preview.Users)
+		if errors.Is(err, errAccountConflict) {
+			err = errLDAPPreviewStale
 			failureStatus = http.StatusConflict
 		} else if err != nil {
-			failureStatus = http.StatusInternalServerError
+			failureStatus = accountErrorStatus(err)
 		}
 	}
 	if err != nil {
@@ -312,10 +303,10 @@ func (s *state) adminLDAPSync(w http.ResponseWriter, r *http.Request) {
 		s.audit(actor, "ldap.sync.preview.consume", "failed", map[string]any{"error": consumeErr.Error()})
 	}
 	s.audit(actor, "ldap.sync.confirm", "success", map[string]any{
-		"added": preview.Added, "updated": preview.Updated, "disabled": preview.Disabled, "draft_version": meta.Version,
+		"added": preview.Added, "updated": preview.Updated, "disabled": preview.Disabled, "users_version": usersVersion,
 	})
 	writeJSON(w, map[string]any{
 		"success": true, "added": preview.Added, "updated": preview.Updated, "disabled": preview.Disabled,
-		"users": current.Users, "draft_version": meta.Version, "draft_updated_at": meta.UpdatedAt, "draft_updated_by": meta.UpdatedBy,
+		"users": users, "users_version": usersVersion,
 	})
 }

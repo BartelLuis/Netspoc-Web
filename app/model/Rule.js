@@ -25,6 +25,32 @@ Ext.define(
         fields: [
             { name: 'has_user', mapping: 'has_user' },
             { name: 'action', mapping: 'action' },
+            { name: 'policy_name', mapping: 'policy_name' },
+            { name: 'stable_rule_id', mapping: 'stable_rule_id' },
+            { name: 'current', mapping: 'current' },
+            { name: 'service_name', mapping: 'service' },
+            { name: 'active_owner', mapping: 'active_owner' },
+            {
+                name: 'base_version', mapping: function (node) {
+                    return node.base_version || node.policy_version || '';
+                }
+            },
+            {
+                name: 'source_refs', mapping: function (node) {
+                    return node.source_refs || node.src_refs || node.raw_src || [];
+                }
+            },
+            {
+                name: 'destination_refs', mapping: function (node) {
+                    return node.destination_refs || node.dst_refs || node.raw_dst || [];
+                }
+            },
+            {
+                name: 'protocol_refs', mapping: function (node) {
+                    return node.protocol_refs || node.prt_refs || node.raw_prt ||
+                        node.prt || [];
+                }
+            },
             {
                 name: 'src',
                 sortType: "asIP",

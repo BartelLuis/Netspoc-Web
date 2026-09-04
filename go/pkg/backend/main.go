@@ -11,6 +11,7 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,7 @@ type state struct {
 	*cache
 	config         *config
 	sessionManager *SessionManager
+	setupMu        sync.Mutex
 }
 
 func getMux() (*http.ServeMux, *state) {
@@ -34,6 +36,12 @@ func getMux() (*http.ServeMux, *state) {
 		cache:          newCache(cfg.NetspocData, 8),
 		sessionManager: sm,
 	}
+	if err := s.cleanupManagedFortiGateCredentials(); err != nil {
+		log.Printf("clean up stale FortiGate credentials during startup: %v", err)
+	}
+	if err := s.reconcileStaleSetupClaim(); err != nil {
+		log.Printf("reconcile interrupted initial setup during startup: %v", err)
+	}
 	noLoginMux := http.NewServeMux()
 	noLoginMux.HandleFunc("/login", s.loginHandler)
 	noLoginMux.HandleFunc("/ldap-login", s.ldapLoginHandler)
@@ -41,15 +49,9 @@ func getMux() (*http.ServeMux, *state) {
 	noLoginMux.HandleFunc("/get_policy", s.getPolicy)
 	noLoginMux.HandleFunc("/register", s.register)
 	noLoginMux.HandleFunc("/verify", s.verify)
-	noLoginMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(jsonMap{"status": "ok"})
-	})
+	noLoginMux.HandleFunc("/healthz", healthz)
 	noLoginMux.HandleFunc("/admin/status", s.adminStatus)
+	noLoginMux.Handle("/setup", requireBootstrapToken(http.HandlerFunc(s.setup)))
 	noLoginMux.Handle("/admin/bootstrap", requireBootstrapToken(http.HandlerFunc(s.adminBootstrap)))
 
 	needsLoginMux := http.NewServeMux()
@@ -75,7 +77,16 @@ func getMux() (*http.ServeMux, *state) {
 	needsLoginMux.HandleFunc("/service_list", s.serviceList)
 	needsLoginMux.HandleFunc("/set", s.setSessionData)
 	needsLoginMux.HandleFunc("/fortinet/status", s.getFortinetStatus)
+	needsLoginMux.HandleFunc("/devices/routes", s.getDeviceRoutes)
+	needsLoginMux.HandleFunc("/requests", s.policyRequests)
+	needsLoginMux.HandleFunc("/requests/context", s.policyRequestContext)
+	needsLoginMux.HandleFunc("/admin/fortigates", s.adminFortiGates)
+	needsLoginMux.HandleFunc("/admin/fortigates/test", s.adminTestFortiGate)
+	needsLoginMux.HandleFunc("/admin/requests", s.adminPolicyRequests)
+	needsLoginMux.HandleFunc("/admin/requests/stage", s.adminStagePolicyRequest)
+	needsLoginMux.HandleFunc("/admin/requests/reject", s.adminRejectPolicyRequest)
 	needsLoginMux.HandleFunc("/admin/policy", s.adminPolicy)
+	needsLoginMux.HandleFunc("/admin/users", s.adminUsers)
 	needsLoginMux.HandleFunc("/admin/ldap-sync", s.adminLDAPSync)
 	needsLoginMux.HandleFunc("/admin/ldap-sync-preview", s.adminLDAPSyncPreview)
 	needsLoginMux.HandleFunc("/admin/policy-name-preview", s.adminPolicyNamePreview)
@@ -98,10 +109,18 @@ func getMux() (*http.ServeMux, *state) {
 			return
 		}
 		if loggedIn(r) {
+			actor := strings.ToLower(strings.TrimSpace(getEmailFromSession(r)))
+			if actor != "guest" {
+				if _, active := s.activeAccount(actor); !active {
+					s.logout(GetGoSession(r))
+				}
+			}
+		}
+		if loggedIn(r) {
 			maintenanceActive, _ := s.effectiveMaintenance()
 			if !maintenanceRequestAllowed(maintenanceActive, s.authorizationPolicy(), getEmailFromSession(r)) && !maintenanceEndpointExempt(r.URL.Path) {
 				s.logout(GetGoSession(r))
-				writeError(w, "Das System befindet sich im Wartungsmodus. Die Anmeldung ist nur für Administratoren möglich.", http.StatusServiceUnavailable)
+				writeError(w, "Das System befindet sich im Wartungsmodus. Die Anmeldung ist nur für Administratoren und Developer möglich.", http.StatusServiceUnavailable)
 				return
 			}
 		}
@@ -119,6 +138,16 @@ func getMux() (*http.ServeMux, *state) {
 		}
 	})
 	return defaultMux, s
+}
+
+func healthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(jsonMap{"status": "ok"})
 }
 
 // requireBootstrapToken protects first-run initialization with a server-side

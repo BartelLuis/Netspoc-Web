@@ -212,7 +212,7 @@ test('invalid programmatic themes are rejected', () => {
 });
 
 test('static pages load the shared theme assets', async (t) => {
-	const pages = ['admin.html', 'index.html', 'start.html', 'passwd.html'];
+	const pages = ['admin.html', 'devices.html', 'requests.html', 'index.html', 'start.html', 'passwd.html'];
 
   for (const page of pages) {
     await t.test(page, async () => {
@@ -242,6 +242,13 @@ test('ExtJS application loads the theme runtime and its dedicated overlay', asyn
 	);
 	assert.match(adminView, /pw-admin-frame/);
 	assert.doesNotMatch(adminView, /background\s*:\s*#f4f7fa/i);
+
+	const devicesView = await readFile(
+		join(repositoryRoot, 'app', 'view', 'Devices.js'),
+		'utf8',
+	);
+	assert.match(devicesView, /pw-devices-frame/);
+	assert.match(devicesView, /devices\.html\?embedded=1/);
 });
 
 test('standalone backend templates load the shared theme assets', async (t) => {
@@ -281,6 +288,7 @@ test('shared CSS defines dark colors and accessible toggle state', async () => {
 	assert.match(extCSS, /html\[data-theme=["']dark["']\]/);
 	assert.match(extCSS, /color-scheme\s*:\s*dark/);
 	assert.match(extCSS, /html\[data-theme=["']dark["']\]\s+\.pw-admin-frame/);
+	assert.match(extCSS, /html\[data-theme=["']dark["']\]\s+\.pw-devices-frame/);
 	assert.match(extCSS, /html\[data-theme=["']dark["']\]\s+\.x-form-arrow-trigger/);
 	assert.match(extCSS, /html\[data-theme=["']dark["']\]\s+\.x-window-default/);
 });

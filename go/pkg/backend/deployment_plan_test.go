@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -357,7 +358,7 @@ func TestFortiOS74IPv6UsesUnifiedPolicyTable(t *testing.T) {
 	}
 }
 
-func TestDeploymentPolicyCreateOrderUsesReviewedInsertionChain(t *testing.T) {
+func TestDeploymentPolicyCreateOrderUsesReviewedSourceOrderNotManualNames(t *testing.T) {
 	p := deployableNamingPolicy(t)
 	base := p.Services[0].Rules[0]
 	a, b, c := base, base, base
@@ -381,8 +382,10 @@ func TestDeploymentPolicyCreateOrderUsesReviewedInsertionChain(t *testing.T) {
 	if len(policies) != 3 {
 		t.Fatalf("policy commands = %d, want 3", len(policies))
 	}
-	wantNames := []string{"POLICY_C", "POLICY_B", "POLICY_A"}
-	wantAnchors := []string{"POLICYWEB-END", "POLICY_C", "POLICY_B"}
+	// The reviewed source order is C, A, B. Creation runs bottom-up while the
+	// insertion anchors recreate exactly that order on the appliance.
+	wantNames := []string{"POLICY_B", "POLICY_A", "POLICY_C"}
+	wantAnchors := []string{"POLICYWEB-END", "POLICY_B", "POLICY_A"}
 	for i, command := range policies {
 		if got := scalarString(command.Payload["name"]); got != wantNames[i] || command.InsertBefore != wantAnchors[i] {
 			t.Fatalf("policy command %d = %q before %q, want %q before %q", i, got, command.InsertBefore, wantNames[i], wantAnchors[i])
@@ -390,6 +393,20 @@ func TestDeploymentPolicyCreateOrderUsesReviewedInsertionChain(t *testing.T) {
 		if !strings.Contains(command.Command, "filter=name=="+wantAnchors[i]) {
 			t.Fatalf("review preview lacks insertion successor %q:\n%s", wantAnchors[i], command.Command)
 		}
+	}
+}
+
+func TestManualPolicyNameCannotCollideWithInsertionAnchor(t *testing.T) {
+	p := deployableNamingPolicy(t)
+	p.Services[0].Rules[0].PolicyName = "POLICYWEB-END"
+	target := FortinetTarget{
+		Name: "edge", Type: "fortigate", URL: "https://edge.example.test", TokenEnv: "FORTIGATE_TOKEN", VDOM: "prod",
+		TargetContexts: []string{"prod"}, AllowDeploy: true, PolicyInsertBefore: "policyweb-end",
+		ZoneInterfaces: map[string]string{"GDMZ": "port2", "IDMZ": "port3"},
+	}
+	plan := generateDeploymentPlan(p, []FortinetTarget{target})
+	if plan.Ready || !slices.ContainsFunc(plan.Errors, func(message string) bool { return strings.Contains(message, "Policy-Anker") }) {
+		t.Fatalf("anchor collision produced an executable plan: %#v", plan)
 	}
 }
 

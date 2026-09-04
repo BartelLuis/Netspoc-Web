@@ -269,12 +269,12 @@ my $chld_in;
 
 sub prepare_runtime_base {
 
-    # Prepare config file for netspoc.psgi
+    # Prepare the configuration for the Go test server.
     open( my $fh, '>', $conf_file ) or die "Can't open $conf_file";
     print $fh $conf_data;
     close $fh;
 
-    # netspoc.psgi searches config file in $HOME directory.
+    # The test server searches for policyweb.conf in $HOME by default.
     local $ENV{HOME} = $home_dir;
 
     # Automatically clean up child process after it has finished.

@@ -2,6 +2,7 @@ package backend
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ func validEditablePolicy() *editablePolicy {
 			Rules: []editableRule{{
 				Action: "permit", Sources: []string{"network:office"}, Destinations: []string{"host:server"}, Protocols: []string{"tcp 443"},
 				RuleGroup: "SRV", Owner: "network-team", ChangeReference: "CHG-1", ReviewDate: "2030-12-31", Purpose: "Web access",
-				StableRuleID: "123e4567-e89b-42d3-a456-426614174000", TargetContext: "prod",
+				StableRuleID: "123e4567-e89b-42d3-a456-426614174000", TargetContext: "prod", PolicyName: "WEB_ALLOW",
 			}},
 		}},
 	}
@@ -185,6 +186,7 @@ func TestPolicyRoles(t *testing.T) {
 	p := &editablePolicy{Users: []editableUser{
 		{Email: "admin@example.net", Role: "admin"},
 		{Email: "editor@example.net", Role: "editor"},
+		{Email: "developer@example.net", Role: policyDeveloperRole},
 		{Email: "reader@example.net", Role: "viewer"},
 	}}
 	if !hasPolicyRole(p, "EDITOR@example.net", "admin", "editor") {
@@ -192,6 +194,72 @@ func TestPolicyRoles(t *testing.T) {
 	}
 	if hasPolicyRole(p, "reader@example.net", "admin", "editor") {
 		t.Fatal("viewer received administration access")
+	}
+	for _, role := range []string{"admin", "editor", "reviewer", "deployer", "viewer"} {
+		if !hasPolicyRole(p, "DEVELOPER@example.net", role) {
+			t.Fatalf("developer did not inherit %q capability", role)
+		}
+	}
+	if !bypassesFourEyes(p, "developer@example.net") || bypassesFourEyes(p, "admin@example.net") {
+		t.Fatal("four-eyes bypass is not limited to the developer role")
+	}
+}
+
+func TestDeveloperSatisfiesPolicyAdministratorInvariant(t *testing.T) {
+	p := validEditablePolicy()
+	p.Users[0].Role = policyDeveloperRole
+	if err := validateEditablePolicy(p); err != nil {
+		t.Fatalf("developer-only policy administration was rejected: %v", err)
+	}
+	if !maintenanceLoginAllowed(p, p.Users[0].Email) {
+		t.Fatal("developer cannot log in during maintenance")
+	}
+}
+
+func TestDeveloperCanUseDirectAdministrationGates(t *testing.T) {
+	s := workflowTestState(t, editableUser{Email: "developer@example.net", Role: policyDeveloperRole})
+	s.config.FortiGateReadOnly = true
+	p := validEditablePolicy()
+	p.Users = append(p.Users, editableUser{Email: "developer@example.net", Role: policyDeveloperRole})
+	if err := s.storePublication("p-developer-admin-gates", p); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := s.saveDraftAs(p, "admin@example.net", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	statusRequest, _ := ownerRequest(http.MethodGet, "/admin/status", "", "developer@example.net")
+	statusResponse := httptest.NewRecorder()
+	s.adminStatus(statusResponse, statusRequest)
+	if statusResponse.Code != http.StatusOK || !strings.Contains(statusResponse.Body.String(), `"role":"developer"`) || !strings.Contains(statusResponse.Body.String(), `"maintenance"`) || !strings.Contains(statusResponse.Body.String(), `"fortigate_read_only":true`) {
+		t.Fatalf("developer status = %d body=%s", statusResponse.Code, statusResponse.Body.String())
+	}
+
+	policyRequest, _ := ownerRequest(http.MethodGet, "/admin/policy", "", "developer@example.net")
+	policyResponse := httptest.NewRecorder()
+	s.adminPolicy(policyResponse, policyRequest)
+	if policyResponse.Code != http.StatusOK {
+		t.Fatalf("developer policy GET = %d body=%s", policyResponse.Code, policyResponse.Body.String())
+	}
+
+	policyJSON, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := meta.Version
+	stageJSON, err := json.Marshal(stageRequest{
+		Policy: policyJSON, DraftVersion: &version, Comment: "developer staging test", ChangeReference: "DEV-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stageRequestHTTP, _ := ownerRequest(http.MethodPost, "/admin/stage", string(stageJSON), "developer@example.net")
+	stageRequestHTTP.Header.Set("Content-Type", "application/json")
+	stageResponse := httptest.NewRecorder()
+	s.adminStage(stageResponse, stageRequestHTTP)
+	if stageResponse.Code != http.StatusOK {
+		t.Fatalf("developer stage = %d body=%s", stageResponse.Code, stageResponse.Body.String())
 	}
 }
 
@@ -217,6 +285,7 @@ func TestPublishEditablePolicy(t *testing.T) {
 		config: &config{NetspocData: filepath.Join(root, "policies"), UserDir: filepath.Join(root, "users")},
 		cache:  newCache(filepath.Join(root, "policies"), 8),
 	}
+	seedPolicyTestAccounts(t, s, validEditablePolicy().Users...)
 	if err := s.publishPolicy(validEditablePolicy()); err != nil {
 		t.Fatal(err)
 	}
@@ -252,6 +321,7 @@ func TestPublishedPoliciesAppearInHistory(t *testing.T) {
 	root := t.TempDir()
 	s := &state{config: &config{NetspocData: filepath.Join(root, "policies"), UserDir: filepath.Join(root, "users")}, cache: newCache(filepath.Join(root, "policies"), 8)}
 	p := validEditablePolicy()
+	seedPolicyTestAccounts(t, s, p.Users...)
 	if err := s.publishPolicy(p); err != nil {
 		t.Fatal(err)
 	}
@@ -279,6 +349,7 @@ func TestPublishOwnerInheritanceAndHostOwnership(t *testing.T) {
 	p.Owners = append(p.Owners, editableOwner{Name: "child", Parent: "network-team", Users: []string{"child@example.net"}})
 	p.Networks[0].Hosts[0].Owner = "child"
 	s := &state{config: &config{NetspocData: filepath.Join(root, "policies"), UserDir: filepath.Join(root, "users")}, cache: newCache(filepath.Join(root, "policies"), 8)}
+	seedPolicyTestAccounts(t, s, p.Users...)
 	if err := validateEditablePolicy(p); err != nil {
 		t.Fatal(err)
 	}

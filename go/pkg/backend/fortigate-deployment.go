@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -91,8 +90,8 @@ func preflightFortiGateTargets(ctx context.Context, targets []*runtimeTarget) er
 		if target.Config.InsecureSkipVerify {
 			return fmt.Errorf("target %q requires verified TLS; insecure_skip_verify is forbidden for authenticated FortiGate requests", target.Config.Name)
 		}
-		if os.Getenv(target.Config.TokenEnv) == "" {
-			return fmt.Errorf("target %q credential environment variable %s is empty", target.Config.Name, target.Config.TokenEnv)
+		if _, err := target.Config.apiToken(); err != nil {
+			return fmt.Errorf("target %q credential: %w", target.Config.Name, err)
 		}
 		client, err := target.Config.httpClient()
 		if err != nil {
@@ -1003,17 +1002,6 @@ func verifyLivePolicySuccessor(ctx context.Context, snapshot deploymentSnapshot,
 	return nil
 }
 
-func verifyPolicySnapshotPosition(ctx context.Context, snapshot deploymentSnapshot, policyMKey string) error {
-	before, after, err := policyNeighbours(ctx, snapshot.Target.Client, snapshot.Target.Config, snapshot.Command.Path, policyMKey)
-	if err != nil {
-		return fmt.Errorf("verify snapshotted policy order: %w", err)
-	}
-	if before != snapshot.BeforeMKey || after != snapshot.AfterMKey {
-		return errors.New("policy position changed after snapshot")
-	}
-	return nil
-}
-
 func observeAbsentPolicyPostState(ctx context.Context, snapshot *deploymentSnapshot) error {
 	ordered, err := listFortiGateObjects(ctx, snapshot.Target.Client, snapshot.Target.Config, snapshot.Command.Path, nil)
 	if err != nil {
@@ -1771,8 +1759,23 @@ func withMKey(path, mkey string) string {
 }
 
 func fortiGateCall(ctx context.Context, client *http.Client, target FortinetTarget, method, path string, query url.Values, payload map[string]any) (map[string]any, error) {
-	if !strings.HasPrefix(path, "/api/v2/cmdb/") && path != "/api/v2/monitor/system/status" {
+	if !strings.EqualFold(method, http.MethodGet) {
+		readOnly, settingErr := fortiGateReadOnlySetting()
+		if settingErr != nil {
+			return nil, settingErr
+		}
+		if readOnly {
+			return nil, errFortiGateReadOnly
+		}
+	}
+	allowedMonitorPath := path == "/api/v2/monitor/system/status" ||
+		path == "/api/v2/monitor/router/ipv4" ||
+		path == "/api/v2/monitor/router/ipv6"
+	if !strings.HasPrefix(path, "/api/v2/cmdb/") && !allowedMonitorPath {
 		return nil, errors.New("FortiGate API path is outside the allowed deployment endpoints")
+	}
+	if allowedMonitorPath && method != http.MethodGet {
+		return nil, errors.New("FortiGate monitor endpoints are read-only")
 	}
 	baseURL, err := normalizedFortinetEndpoint(target.URL)
 	if err != nil {
@@ -1804,9 +1807,9 @@ func fortiGateCall(ctx context.Context, client *http.Client, target FortinetTarg
 	if err != nil {
 		return nil, err
 	}
-	token := os.Getenv(target.TokenEnv)
-	if token == "" {
-		return nil, fmt.Errorf("environment variable %s is empty", target.TokenEnv)
+	token, err := target.apiToken()
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	if payload != nil {
@@ -1822,7 +1825,7 @@ func fortiGateCall(ctx context.Context, client *http.Client, target FortinetTarg
 		return nil, readErr
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", response.StatusCode, limitedFortinetText(strings.TrimSpace(string(data))))
+		return nil, fmt.Errorf("FortiGate returned HTTP %d", response.StatusCode)
 	}
 	result := map[string]any{}
 	if len(bytes.TrimSpace(data)) != 0 {
@@ -1833,31 +1836,20 @@ func fortiGateCall(ctx context.Context, client *http.Client, target FortinetTarg
 		}
 	}
 	if err := fortiGateApplicationError(result); err != nil {
-		return nil, err
+		return nil, errors.New(redactedFortinetError(target, err))
 	}
 	return result, nil
 }
+
+var errFortiGateReadOnly = fmt.Errorf("FortiGate connectivity is read-only (%s=true)", fortiGateReadOnlyEnv)
 
 func fortiGateApplicationError(result map[string]any) error {
 	status := strings.ToLower(firstScalarString(result, "status"))
 	httpStatus, _ := strconv.Atoi(firstScalarString(result, "http_status"))
 	if status == "error" || status == "failed" || httpStatus >= 400 {
-		message := firstScalarString(result, "error", "message")
-		if message == "" {
-			message = "FortiGate rejected the request"
-		}
-		return errors.New(limitedFortinetText(message))
+		return errors.New("FortiGate rejected the request")
 	}
 	return nil
-}
-
-func limitedFortinetText(value string) string {
-	const limit = 4096
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit]) + "..."
 }
 
 func firstScalarString(value any, keys ...string) string {

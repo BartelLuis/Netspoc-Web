@@ -145,7 +145,11 @@ Ext.define(
                     select: this.onServiceSelected
                 },
                 'servicerules': {
-                    printrules: this.onPrintRules
+                    printrules: this.onPrintRules,
+                    selectionchange: this.onRuleRequestSelectionChange
+                },
+                'servicerules button[requestOperation]': {
+                    click: this.onRuleRequestButtonClick
                 },
                 'serviceusers': {
                     select: this.onUserDetailsSelected
@@ -244,14 +248,395 @@ Ext.define(
             this
         );
 
+        var rulesstore = this.getRulesStore();
+        rulesstore.on('load',
+            function () {
+                var grid = this.getRulesGrid();
+                if (grid) {
+                    grid.select0();
+                }
+                this.updateRuleRequestButtons();
+            },
+            this
+        );
+
         appstate.addListener(
             'changed',
             function () {
                 if (appstate.getInitPhase()) { return; }
+                this.updateRuleRequestButtons();
                 this.loadServiceStoreWithParams();
             },
             this
         );
+    },
+
+    onRuleRequestSelectionChange: function () {
+        this.updateRuleRequestButtons();
+    },
+
+    updateRuleRequestButtons: function () {
+        var grid = this.getRulesGrid();
+        if (!grid) {
+            return;
+        }
+        var selected = grid.getSelectionModel().getSelection();
+        var record = selected && selected[0];
+        var current = appstate.isCurrentPolicy &&
+            appstate.isCurrentPolicy();
+        var selectedService = this.getSelectedServiceName();
+        var hasIdentity = record && record.get('current') === true &&
+            record.get('service_name') === selectedService &&
+            record.get('active_owner') === appstate.getOwner() &&
+            record.get('stable_rule_id') && record.get('base_version');
+        var disabled = grid.getStore().isLoading() || !current || !hasIdentity;
+        var tooltip = '';
+        if (!current) {
+            tooltip = 'Anträge sind nur für den aktuellen Policy-Stand möglich.';
+        }
+        else if (!record) {
+            tooltip = 'Bitte zuerst eine Regel auswählen.';
+        }
+        else if (!hasIdentity) {
+            tooltip = 'Die Regel besitzt keine stabile Identität oder Basisversion.';
+        }
+        Ext.Array.each(grid.query('button[requestOperation]'),
+            function (button) {
+                button.setDisabled(disabled);
+                button.setTooltip(tooltip || 'Änderung für die ausgewählte Regel beantragen.');
+            }
+        );
+    },
+
+    ruleRequestValues: function (record, field) {
+        var modelField = {
+            sources: 'source_refs',
+            destinations: 'destination_refs',
+            protocols: 'protocol_refs'
+        }[field];
+        var values = modelField ? record.get(modelField) : [];
+        if (!Ext.isArray(values)) {
+            values = values ? [values] : [];
+        }
+        return Ext.Array.unique(Ext.Array.clean(Ext.Array.map(values,
+            function (value) {
+                return Ext.String.trim(String(value || ''));
+            }
+        )));
+    },
+
+    contextObjectReferences: function (data) {
+        var values = [];
+        var append = function (items, prefix) {
+            Ext.Array.each(Ext.isArray(items) ? items : [], function (item) {
+                var value;
+                if (Ext.isString(item)) {
+                    value = item;
+                }
+                else if (item) {
+                    value = item.reference || item.ref || item.value ||
+                        item.id || item.name;
+                }
+                value = Ext.String.trim(String(value || ''));
+                if (value && prefix && value.indexOf(':') < 0) {
+                    value = prefix + ':' + value;
+                }
+                if (/^(network|host|fqdn):/.test(value)) {
+                    values.push(value);
+                }
+            });
+        };
+        append(data.object_refs || data.object_references || data.references ||
+            data.objects);
+        append(data.networks, 'network');
+        append(data.hosts, 'host');
+        append(data.fqdns, 'fqdn');
+        values.sort();
+        return Ext.Array.unique(values);
+    },
+
+    onRuleRequestButtonClick: function (button) {
+        if (!appstate.isCurrentPolicy || !appstate.isCurrentPolicy()) {
+            Ext.Msg.alert('Antrag nicht möglich',
+                'Regeländerungen können nur für den aktuellen Policy-Stand beantragt werden.');
+            this.updateRuleRequestButtons();
+            return;
+        }
+        var grid = button.up('servicerules');
+        var selected = grid.getSelectionModel().getSelection();
+        var record = selected && selected[0];
+        if (!record) {
+            Ext.Msg.alert('Regel auswählen',
+                'Bitte zuerst die zu ändernde Regel auswählen.');
+            return;
+        }
+        var stableRuleID = record.get('stable_rule_id');
+        var baseVersion = record.get('base_version');
+        if (!stableRuleID || !baseVersion) {
+            Ext.Msg.alert('Antrag nicht möglich',
+                'Die Regel besitzt keine stabile Identität oder Basisversion. Bitte laden Sie die aktuelle Policy neu.');
+            return;
+        }
+
+        var operation = button.requestOperation;
+        var field = button.requestField;
+        var serviceName = this.getSelectedServiceName();
+        var activeOwner = appstate.getOwner();
+        if (record.get('current') !== true ||
+            record.get('service_name') !== serviceName ||
+            record.get('active_owner') !== activeOwner) {
+            Ext.Msg.alert('Auswahl oder Policystand geändert',
+                'Die geladene Regel gehört nicht mehr zur aktuellen Auswahl oder zum aktuellen Policystand. Bitte laden Sie den Dienst neu.');
+            this.updateRuleRequestButtons();
+            return;
+        }
+        var currentValues = this.ruleRequestValues(record, field);
+        if (operation === 'remove' && currentValues.length < 2) {
+            Ext.Msg.alert('Antrag nicht möglich',
+                'Das letzte Element einer Quelle, eines Ziels oder einer Portliste kann nicht entfernt werden.');
+            return;
+        }
+
+        if (operation === 'add' && field !== 'protocols') {
+            var controller = this;
+            Ext.Ajax.request({
+                url: 'backend6/requests/context',
+                method: 'GET',
+                params: {
+                    active_owner: activeOwner,
+                    base_version: baseVersion,
+                    service: serviceName,
+                    stable_rule_id: stableRuleID
+                },
+                success: function (response) {
+                    var data;
+                    try {
+                        data = Ext.decode(response.responseText);
+                    }
+                    catch (error) {
+                        Ext.Msg.alert('Antrag nicht möglich',
+                            'Der Server hat ungültige Auswahldaten geliefert.');
+                        return;
+                    }
+                    if (data.success === false) {
+                        Ext.Msg.alert('Antrag nicht möglich',
+                            Ext.String.htmlEncode(String(data.msg || data.message ||
+                                'Die Auswahldaten für den Antrag konnten nicht geladen werden.')));
+                        return;
+                    }
+                    if (data.current !== true || data.base_version !== baseVersion) {
+                        Ext.Msg.alert('Policy inzwischen geändert',
+                            'Die Basisversion der Regel ist nicht mehr aktuell. Bitte laden Sie die Policy neu.');
+                        return;
+                    }
+                    var available = controller.contextObjectReferences(data);
+                    if (field === 'sources') {
+                        available = Ext.Array.filter(available,
+                            function (value) {
+                                return value.indexOf('fqdn:') !== 0;
+                            }
+                        );
+                    }
+                    var options = Ext.Array.difference(available, currentValues);
+                    if (controller.getSelectedServiceName() !== serviceName ||
+                        appstate.getOwner() !== activeOwner) {
+                        return;
+                    }
+                    if (!options.length) {
+                        Ext.Msg.alert('Antrag nicht möglich',
+                            'Für diesen Verantwortungsbereich sind keine weiteren vorhandenen Objekte verfügbar.');
+                        return;
+                    }
+                    controller.showRuleRequestWindow(
+                        record, serviceName, activeOwner, operation, field,
+                        options);
+                },
+                failure: function (response) {
+                    controller.showRuleRequestFailure(response);
+                }
+            });
+            return;
+        }
+        this.showRuleRequestWindow(record, serviceName, activeOwner, operation,
+            field, operation === 'remove' ? currentValues : null);
+    },
+
+    showRuleRequestWindow: function (record, serviceName, activeOwner,
+        operation, field, options) {
+        var controller = this;
+        var labels = {
+            sources: 'Quelle',
+            destinations: 'Ziel',
+            protocols: 'Port/Protokoll'
+        };
+        var valueField;
+        if (options) {
+            var optionData = Ext.Array.map(options, function (value) {
+                return { value: value };
+            });
+            valueField = {
+                xtype: 'combo',
+                name: 'value',
+                fieldLabel: labels[field],
+                store: Ext.create('Ext.data.Store', {
+                    fields: ['value'],
+                    data: optionData
+                }),
+                displayField: 'value',
+                valueField: 'value',
+                queryMode: 'local',
+                forceSelection: true,
+                editable: true,
+                allowBlank: false,
+                anchor: '100%'
+            };
+        }
+        else {
+            valueField = {
+                xtype: 'textfield',
+                name: 'value',
+                fieldLabel: labels[field],
+                emptyText: 'z. B. tcp 443 oder udp 53',
+                allowBlank: false,
+                maxLength: 128,
+                anchor: '100%'
+            };
+        }
+        var formPanel = Ext.create('Ext.form.Panel', {
+            bodyPadding: 12,
+            border: false,
+            defaults: { labelWidth: 110 },
+            items: [
+                {
+                    xtype: 'displayfield',
+                    fieldLabel: 'Dienst',
+                    value: Ext.String.htmlEncode(serviceName || '')
+                },
+                {
+                    xtype: 'displayfield',
+                    fieldLabel: 'Vorgang',
+                    value: operation === 'add' ? 'Hinzufügen' : 'Entfernen'
+                },
+                valueField,
+                {
+                    xtype: 'textarea',
+                    name: 'reason',
+                    fieldLabel: 'Begründung',
+                    allowBlank: false,
+                    maxLength: 2000,
+                    anchor: '100%',
+                    height: 90
+                }
+            ]
+        });
+        var window = Ext.create('Ext.window.Window', {
+            title: labels[field] +
+                (operation === 'add' ? ' hinzufügen' : ' entfernen'),
+            modal: true,
+            resizable: false,
+            width: 560,
+            layout: 'fit',
+            items: [formPanel],
+            buttons: [
+                {
+                    text: 'Abbrechen',
+                    handler: function () { window.close(); }
+                },
+                {
+                    text: 'Antrag senden',
+                    itemId: 'send-rule-request',
+                    handler: function (sendButton) {
+                        var form = formPanel.getForm();
+                        if (!form.isValid()) {
+                            return;
+                        }
+                        var values = form.getValues();
+                        var value = Ext.String.trim(values.value || '');
+                        var reason = Ext.String.trim(values.reason || '');
+                        if (!value || !reason) {
+                            Ext.Msg.alert('Pflichtangaben fehlen',
+                                'Bitte geben Sie einen Wert und eine Begründung an.');
+                            return;
+                        }
+                        sendButton.setDisabled(true);
+                        controller.submitRuleRequest({
+                            record: record,
+                            service: serviceName,
+                            activeOwner: activeOwner,
+                            operation: operation,
+                            field: field,
+                            value: value,
+                            reason: reason,
+                            window: window,
+                            button: sendButton
+                        });
+                    }
+                }
+            ]
+        });
+        window.show();
+    },
+
+    submitRuleRequest: function (request) {
+        var controller = this;
+        if (!appstate.isCurrentPolicy || !appstate.isCurrentPolicy() ||
+            appstate.getOwner() !== request.activeOwner ||
+            controller.getSelectedServiceName() !== request.service ||
+            request.record.get('current') !== true ||
+            request.record.get('service_name') !== request.service ||
+            request.record.get('active_owner') !== request.activeOwner) {
+            request.button.setDisabled(false);
+            Ext.Msg.alert('Auswahl oder Policystand geändert',
+                'Dienst, Verantwortungsbereich oder Policystand wurden geändert. Bitte schließen Sie den Dialog und starten Sie den Antrag erneut.');
+            return;
+        }
+        var payload = {
+            request_type: 'rule_change',
+            active_owner: request.activeOwner,
+            base_version: request.record.get('base_version'),
+            reason: request.reason,
+            rule_change: {
+                service: request.service,
+                stable_rule_id: request.record.get('stable_rule_id'),
+                operation: request.operation,
+                field: request.field,
+                value: request.value
+            }
+        };
+        Ext.Ajax.request({
+            url: 'backend6/requests',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            jsonData: payload,
+            success: function (response) {
+                var data = {};
+                try { data = Ext.decode(response.responseText); }
+                catch (error) { data = {}; }
+                request.window.close();
+                var id = data.request_id || data.id || '';
+                Ext.Msg.alert('Antrag eingereicht',
+                    'Der Regeländerungsantrag' +
+                    (id ? ' ' + Ext.String.htmlEncode(String(id)) : '') +
+                    ' wurde gespeichert.');
+            },
+            failure: function (response) {
+                request.button.setDisabled(false);
+                controller.showRuleRequestFailure(response);
+            }
+        });
+    },
+
+    showRuleRequestFailure: function (response) {
+        var message = 'Der Antrag konnte nicht gespeichert werden.';
+        try {
+            var data = Ext.decode(response.responseText);
+            message = data.msg || data.message || message;
+        }
+        catch (error) {
+            // Keep the generic, non-sensitive error message.
+        }
+        Ext.Msg.alert('Antrag fehlgeschlagen',
+            Ext.String.htmlEncode(String(message)));
     },
 
     onDeleteObjectFromRule: function (view, rowIndex, colIndex, item, e,
@@ -517,6 +902,8 @@ Ext.define(
 
         // Load rules.
         var rules_store = this.getRulesStore();
+        rules_store.removeAll();
+        this.updateRuleRequestButtons();
         rules_store.getProxy().extraParams.service = name;
         var params = this.getServiceDataParams();
         rules_store.load({ params: params });
@@ -1018,13 +1405,19 @@ Ext.define(
             }
             var rules = this.getRulesStore();
             var fields = rules.model.getFields();
+            var sourceField;
+            var destinationField;
+            Ext.Array.each(fields, function (field) {
+                if (field.name === 'src') { sourceField = field; }
+                if (field.name === 'dst') { destinationField = field; }
+            });
             if (params.display_property === "name" && newVal === true) {
-                fields[3].sortType = "asUCText";
-                fields[4].sortType = "asUCText";
+                sourceField.sortType = "asUCText";
+                destinationField.sortType = "asUCText";
             }
             else {
-                fields[3].sortType = "asIP";
-                fields[4].sortType = "asIP";
+                sourceField.sortType = "asIP";
+                destinationField.sortType = "asIP";
             }
             rules.model.setFields(fields);
             rules.load({ params: params });

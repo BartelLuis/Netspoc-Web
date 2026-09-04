@@ -19,6 +19,7 @@ func publishServiceUserFixture(t *testing.T, p *editablePolicy) *state {
 		},
 		cache: newCache(filepath.Join(root, "policies"), 8),
 	}
+	seedPolicyTestAccounts(t, s, p.Users...)
 	if err := validateEditablePolicy(p); err != nil {
 		t.Fatal(err)
 	}

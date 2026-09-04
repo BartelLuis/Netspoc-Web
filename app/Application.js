@@ -97,6 +97,8 @@ Ext.require([
     'PolicyWeb.view.Service',
     'PolicyWeb.view.Viewport',
     'PolicyWeb.view.Account',
+    'PolicyWeb.view.Requests',
+    'PolicyWeb.view.Devices',
     'PolicyWeb.view.Admin',
     'PolicyWeb.view.button.ChooseService',
     'PolicyWeb.view.button.PrintButton',

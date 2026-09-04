@@ -46,6 +46,8 @@ Ext.define(
                     { xtype : 'networkview' },
                     { xtype : 'diffview'    },
                     { xtype : 'accountview' },
+                    { xtype : 'requestsview' },
+                    { xtype : 'devicesview' },
                     { xtype : 'adminview' }
                 ],
                 tbar   : [
@@ -77,6 +79,21 @@ Ext.define(
                         iconCls      : 'icon-group',
                         toggleGroup  : 'navGrp',
                         enableToggle : true
+                    },
+                    {
+                        id           : 'btn_requests_tab',
+                        text         : 'Antragswesen',
+                        iconCls      : 'icon-page_edit',
+                        toggleGroup  : 'navGrp',
+                        enableToggle : true
+                    },
+                    {
+                        id           : 'btn_devices_tab',
+                        text         : 'Geräte',
+                        iconCls      : 'icon-server',
+                        toggleGroup  : 'navGrp',
+                        enableToggle : true,
+                        hidden       : true
                     },
                     {
                         id           : 'btn_admin_tab',

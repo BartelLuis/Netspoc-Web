@@ -7,32 +7,30 @@ import { fileURLToPath } from 'node:url';
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const html = await readFile(join(repositoryRoot, 'admin.html'), 'utf8');
 
-test('rule lifecycle fields and live naming preview are present', () => {
+test('rule editor uses a manual name and hides naming and lifecycle configuration', () => {
+  assert.match(html, /<th>Regelname<\/th>/);
+  assert.match(html, /data-field="policy_name" required maxlength="35" pattern="\[A-Za-z0-9\]\[A-Za-z0-9_-\]\{0,34\}"/);
   for (const field of [
     'change_reference', 'purpose', 'owner', 'review_date', 'expires_at',
     'rollback_owner', 'tenant_mkz', 'target_context', 'rule_group',
   ]) {
-    assert.match(html, new RegExp(`data-field="${field}"`), `${field} is missing`);
+    if (field === 'owner') {
+      assert.match(html, /aria-label="Verantwortungsbereich" data-field="owner"/);
+    } else {
+      assert.doesNotMatch(html, new RegExp(`data-field="${field}"`), `${field} must not be visible`);
+    }
   }
-  assert.match(html, /class="rule-name-preview"/);
-  assert.match(html, /function updateRuleNamePreview\(/);
-  assert.match(html, /admin\/policy-name-preview/);
-  assert.match(html, /function applyDerivedPolicy\(/);
-  assert.match(html, /result\.policy\|\|\{\}/);
-  assert.doesNotMatch(html, /parts\.join\('_'\)/);
-  assert.match(html, /id="tenant-options"/);
-  assert.match(html, /id="target-context-options"/);
-  assert.match(html, /id="tenant-template"/);
-  assert.match(html, /data-field="mkz"/);
-  assert.match(html, /id="target-context-template"/);
-  assert.match(html, /data-field="context_type"/);
-  assert.match(html, /data-field="assigned_mkz" list="tenant-options"/);
-  assert.match(html, /tenants:\$\$\('\.tenant'\)\.map\(values\)/);
-  assert.match(html, /target_contexts:\$\$\('\.target-context'\)\.map\(values\)/);
-  assert.match(html, /naming_catalog:namingCatalog/);
-  assert.match(html, /const derivedRuleFields=\['stable_rule_id','short_id','policy_name','policy_comment','naming_version'\]/);
+  assert.doesNotMatch(html, /rule-name-preview|policy-name-preview|updateRuleNamePreview|applyDerivedPolicy/);
+  assert.doesNotMatch(html, /data-tab="catalogs"|id="catalogs"|id="tenant-options"|id="target-context-options"/);
+  assert.doesNotMatch(html, /id="tenant-template"|id="target-context-template"|id="catalog-service-(?:code|short)-template"/);
+  assert.match(html, /const serverRuleFields=\['stable_rule_id','short_id','policy_comment','naming_version'\]/);
+  assert.match(html, /const legacyRuleFields=\['rule_group','change_reference','review_date','expires_at','rollback_owner','purpose','tenant_mkz','target_context'\]/);
+  assert.match(html, /const opaqueRuleFields=\[\.\.\.serverRuleFields,\.\.\.legacyRuleFields\]/);
+  assert.match(html, /const legacyPolicyFieldNames=\['tenants','target_contexts','naming_catalog'\]/);
+  assert.match(html, /function preserveLegacyPolicyMetadata\(/);
+  assert.match(html, /\.\.\.legacyPolicyMetadata/);
   assert.match(html, /node\.dataset\[key\]/);
-  assert.match(html, /data-field="expires_at" type="date"/);
+  assert.doesNotMatch(html, /data-field="expires_at"/);
 });
 
 test('network objects use the fixed zone catalog', () => {
@@ -65,10 +63,25 @@ test('reviewer diff renders structured before and after documents', () => {
 test('four-eyes workflow separates review and deployment roles', () => {
   assert.match(html, /option value="reviewer"/);
   assert.match(html, /option value="deployer"/);
+  assert.match(html, /option value="developer">Developer<\/option>/);
   assert.match(html, /admin\/publish/);
   assert.match(html, /admin\/reject/);
   assert.match(html, /samePerson/);
   assert.match(html, /admin\/deploy/);
+});
+
+test('developer receives every administrative capability and is the sole four-eyes exception', () => {
+  assert.match(html, /const isDeveloper=\(\)=>currentRole==='developer'/);
+  assert.match(html, /canAdmin=\(\)=>currentRole==='admin'\|\|isDeveloper\(\)/);
+  assert.match(html, /canEdit=\(\)=>!initialized\|\|canAdmin\(\)\|\|currentRole==='editor'/);
+  assert.match(html, /canReview=\(\)=>canAdmin\(\)\|\|currentRole==='reviewer'/);
+  assert.match(html, /hasDeployRole=\(\)=>canAdmin\(\)\|\|currentRole==='deployer'/);
+  assert.match(html, /canDeploy=\(\)=>hasDeployRole\(\)&&!fortiGateReadOnly/);
+  assert.match(html, /fourEyesBlocked=Boolean\(samePerson&&!isDeveloper\(\)\)/);
+  assert.match(html, /own=!isDeveloper\(\)&&linkedPolicyRequestIsOwn\(\)/);
+  assert.match(html, /!isDeveloper\(\)&&\(linkedPolicyRequestIsOwn\(\)\|\|pendingRevisionIsOwn\(\)\)/);
+  assert.match(html, /\['admin','editor','reviewer','deployer','developer'\]\.includes\(currentRole\)/);
+  assert.match(html, /Developer dürfen auch eigene Revisionen und Anträge entscheiden/);
 });
 
 test('operational safeguards have explicit API flows', () => {
@@ -84,6 +97,14 @@ test('operational safeguards have explicit API flows', () => {
   assert.match(html, /result\.records\|\|result\.items/);
   assert.match(html, /plan_hash:planHash/);
   assert.match(html, /validation\.plan_hash/);
+});
+
+test('FortiGate read-only mode disables deployment but keeps drift available', () => {
+  assert.match(html, /id="fortigate-access"/);
+  assert.match(html, /fortiGateReadOnly=Boolean\(status\.fortigate_read_only\)/);
+  assert.match(html, /fortiGateReadOnly\?'Read-only':'Deployment freigegeben'/);
+  assert.match(html, /\$\('#deploy'\)\.disabled=!canDeploy\(\)/);
+  assert.match(html, /\$\('#load-drift'\)\.disabled=!\(hasDeployRole\(\)\|\|canReview\(\)\)/);
 });
 
 test('maintenance and bootstrap use final security contracts', () => {

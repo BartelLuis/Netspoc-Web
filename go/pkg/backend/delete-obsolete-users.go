@@ -15,10 +15,20 @@ import (
 func DeleteObsoleteUsers() {
 	config := LoadConfig()
 	s := &state{
-		cache: newCache(config.NetspocData, 8),
+		config: config,
+		cache:  newCache(config.NetspocData, 8),
 	}
 	userStoreDir := config.UserDir
 	emailToOwners := s.loadEmail2Owners()
+	accounts, _, err := s.accountCatalog()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not read managed user accounts: %v\n", err)
+		return
+	}
+	managed := make(map[string]bool, len(accounts))
+	for _, account := range accounts {
+		managed[strings.ToLower(account.Email)] = true
+	}
 	d, err := os.Open(userStoreDir)
 	if err != nil {
 		os.Exit(1)
@@ -34,6 +44,9 @@ func DeleteObsoleteUsers() {
 			continue
 		}
 		domain := strings.SplitN(email, "@", 2)[1]
+		if managed[strings.ToLower(email)] {
+			continue
+		}
 		wildcard := "[all]@" + domain
 		if _, ok := emailToOwners[wildcard]; ok {
 			continue

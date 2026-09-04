@@ -26,7 +26,69 @@ Ext.define(
         forceFit: true,
         flex: 2,
         border: false,
+        dockedItems: [
+            {
+                xtype: 'toolbar',
+                dock: 'top',
+                itemId: 'rule-request-toolbar',
+                enableOverflow: true,
+                items: [
+                    {
+                        text: '+ Quelle',
+                        iconCls: 'icon-add',
+                        requestOperation: 'add',
+                        requestField: 'sources',
+                        disabled: true
+                    },
+                    {
+                        text: '\u2212 Quelle',
+                        iconCls: 'icon-delete',
+                        requestOperation: 'remove',
+                        requestField: 'sources',
+                        disabled: true
+                    },
+                    '-',
+                    {
+                        text: '+ Ziel',
+                        iconCls: 'icon-add',
+                        requestOperation: 'add',
+                        requestField: 'destinations',
+                        disabled: true
+                    },
+                    {
+                        text: '\u2212 Ziel',
+                        iconCls: 'icon-delete',
+                        requestOperation: 'remove',
+                        requestField: 'destinations',
+                        disabled: true
+                    },
+                    '-',
+                    {
+                        text: '+ Port',
+                        iconCls: 'icon-add',
+                        requestOperation: 'add',
+                        requestField: 'protocols',
+                        disabled: true
+                    },
+                    {
+                        text: '\u2212 Port',
+                        iconCls: 'icon-delete',
+                        requestOperation: 'remove',
+                        requestField: 'protocols',
+                        disabled: true
+                    }
+                ]
+            }
+        ],
         columns: [
+            {
+                header: 'Regelname',
+                dataIndex: 'policy_name',
+                flex: 3,
+                renderer: function (value) {
+                    return Ext.String.htmlEncode(String(value || ''));
+                }
+            },
             {
                 header: 'Aktion',
                 dataIndex: 'action',

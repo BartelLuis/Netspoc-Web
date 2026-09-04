@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -11,6 +12,80 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestFortiGateReadOnlySetting(t *testing.T) {
+	for name, test := range map[string]struct {
+		value string
+		want  bool
+	}{
+		"unset": {},
+		"false": {value: "false"},
+		"true":  {value: "true", want: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(fortiGateReadOnlyEnv, test.value)
+			got, err := fortiGateReadOnlySetting()
+			if err != nil || got != test.want {
+				t.Fatalf("fortiGateReadOnlySetting() = %v, %v; want %v, nil", got, err, test.want)
+			}
+		})
+	}
+
+	t.Setenv(fortiGateReadOnlyEnv, "sometimes")
+	if _, err := fortiGateReadOnlySetting(); err == nil || !strings.Contains(err.Error(), "true or false") {
+		t.Fatalf("invalid read-only setting error = %v", err)
+	}
+}
+
+func TestFortiGateReadOnlyBlocksMutationsButAllowsReads(t *testing.T) {
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "results": []any{}})
+	}))
+	defer server.Close()
+	t.Setenv("READ_ONLY_FGT_TOKEN", "secret")
+	t.Setenv(fortiGateReadOnlyEnv, "true")
+	target := FortinetTarget{Name: "edge", Type: "fortigate", URL: server.URL, VDOM: "root", TokenEnv: "READ_ONLY_FGT_TOKEN"}
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		if _, err := fortiGateCall(context.Background(), server.Client(), target, method, "/api/v2/cmdb/firewall/address", nil, map[string]any{"name": "blocked"}); !errors.Is(err, errFortiGateReadOnly) {
+			t.Errorf("%s error = %v; want read-only error", method, err)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("read-only mutations reached FortiGate %d times", requests)
+	}
+	if _, err := fortiGateCall(context.Background(), server.Client(), target, http.MethodGet, "/api/v2/cmdb/firewall/address", nil, nil); err != nil {
+		t.Fatalf("read-only GET failed: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("GET requests = %d, want 1", requests)
+	}
+
+	t.Setenv(fortiGateReadOnlyEnv, "false")
+	if _, err := fortiGateCall(context.Background(), server.Client(), target, http.MethodPost, "/api/v2/cmdb/firewall/address", nil, map[string]any{"name": "allowed"}); err != nil {
+		t.Fatalf("write with read-only disabled failed: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests after enabled write = %d, want 2", requests)
+	}
+}
+
+func TestInvalidFortiGateReadOnlySettingFailsClosed(t *testing.T) {
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	defer server.Close()
+	t.Setenv(fortiGateReadOnlyEnv, "invalid")
+	target := FortinetTarget{Name: "edge", Type: "fortigate", URL: server.URL}
+
+	if _, err := fortiGateCall(context.Background(), server.Client(), target, http.MethodPost, "/api/v2/cmdb/firewall/address", nil, nil); err == nil || !strings.Contains(err.Error(), "true or false") {
+		t.Fatalf("invalid setting mutation error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("mutation reached FortiGate despite invalid setting")
+	}
+}
 
 func TestFortinetClientNeverForwardsAuthenticatedRedirects(t *testing.T) {
 	client, err := (FortinetTarget{Type: "fortimanager"}).httpClient()
@@ -146,7 +221,15 @@ func TestPostRPCReportsFortiManagerError(t *testing.T) {
 	defer server.Close()
 	var response map[string]any
 	err := postRPC(server.Client(), server.URL, map[string]any{"id": 1}, &response)
-	if err == nil || err.Error() != "FortiManager error -11: No permission" {
+	if err == nil || err.Error() != "FortiManager returned error code -11" || strings.Contains(err.Error(), "No permission") {
 		t.Fatalf("postRPC() error = %v", err)
+	}
+}
+
+func TestFortiGateApplicationErrorNeverReturnsRemoteMessage(t *testing.T) {
+	const remoteSecret = `token\"with\\json-escaping`
+	err := fortiGateApplicationError(map[string]any{"status": "error", "http_status": 403, "message": remoteSecret})
+	if err == nil || err.Error() != "FortiGate rejected the request" || strings.Contains(err.Error(), remoteSecret) {
+		t.Fatalf("application error = %v", err)
 	}
 }

@@ -34,6 +34,11 @@ func TestLDAPLoginPolicyRecheckUsesCurrentIdentityAndMaintenanceRole(t *testing.
 	if _, err := ldapPolicyLoginUser(activeAdmin, identity, true); err != nil {
 		t.Fatalf("active LDAP administrator was rejected during maintenance: %v", err)
 	}
+	activeDeveloper := &editablePolicy{Users: []editableUser{activeAdmin.Users[0]}}
+	activeDeveloper.Users[0].Role = policyDeveloperRole
+	if _, err := ldapPolicyLoginUser(activeDeveloper, identity, true); err != nil {
+		t.Fatalf("active LDAP developer was rejected during maintenance: %v", err)
+	}
 
 	tests := []struct {
 		name        string
@@ -152,7 +157,10 @@ func TestProtectDirectoryUsersRejectsDuplicateDirectoryID(t *testing.T) {
 func TestLDAPSyncPreviewTokenIsActorBoundAndConfirmedOnce(t *testing.T) {
 	s := workflowTestState(t)
 	p := validEditablePolicy()
-	meta, err := s.saveDraftAs(p, "admin@example.net", nil)
+	if err := s.storePublication("ldap-sync-base", p); err != nil {
+		t.Fatal(err)
+	}
+	_, usersVersion, err := s.accountCatalog()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +172,7 @@ func TestLDAPSyncPreviewTokenIsActorBoundAndConfirmedOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, err := s.storeLDAPSyncPreview("admin@example.net", meta.Version, preview)
+	stored, err := s.storeLDAPSyncPreview("admin@example.net", usersVersion, preview)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +180,7 @@ func TestLDAPSyncPreviewTokenIsActorBoundAndConfirmedOnce(t *testing.T) {
 		t.Fatalf("preview was not actor-bound: %v", err)
 	}
 
-	body, _ := json.Marshal(map[string]any{"confirm": true, "preview_token": stored.Token})
+	body, _ := json.Marshal(map[string]any{"confirm": true, "preview_token": stored.Token, "users_version": stored.UsersVersion})
 	request := httptest.NewRequest(http.MethodPost, "/admin/ldap-sync", bytes.NewReader(body))
 	session := newSession()
 	session.Put("email", "admin@example.net")
@@ -194,24 +202,28 @@ func TestLDAPSyncPreviewTokenIsActorBoundAndConfirmedOnce(t *testing.T) {
 	}
 }
 
-func TestLDAPSyncPreviewBecomesStaleAfterDraftChange(t *testing.T) {
+func TestLDAPSyncPreviewBecomesStaleAfterAccountChange(t *testing.T) {
 	s := workflowTestState(t)
 	p := validEditablePolicy()
-	meta, err := s.saveDraftAs(p, "admin@example.net", nil)
+	if err := s.storePublication("ldap-sync-stale-base", p); err != nil {
+		t.Fatal(err)
+	}
+	_, usersVersion, err := s.accountCatalog()
 	if err != nil {
 		t.Fatal(err)
 	}
 	preview := ldapSyncPreview{Users: append([]editableUser(nil), p.Users...)}
-	stored, err := s.storeLDAPSyncPreview("admin@example.net", meta.Version, preview)
+	stored, err := s.storeLDAPSyncPreview("admin@example.net", usersVersion, preview)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := meta.Version
-	if _, err := s.saveDraftAs(p, "admin@example.net", &expected); err != nil {
+	if _, _, err := s.createAccount("admin@example.net", accountMutationRequest{
+		Email: "concurrent@example.net", Role: "viewer", UsersVersion: &usersVersion,
+	}); err != nil {
 		t.Fatal(err)
 	}
 
-	body, _ := json.Marshal(map[string]any{"confirm": true, "preview_token": stored.Token})
+	body, _ := json.Marshal(map[string]any{"confirm": true, "preview_token": stored.Token, "users_version": stored.UsersVersion})
 	request := httptest.NewRequest(http.MethodPost, "/admin/ldap-sync", bytes.NewReader(body))
 	session := newSession()
 	session.Put("email", "admin@example.net")

@@ -16,7 +16,7 @@ func (s *state) maintenanceStatus(w http.ResponseWriter, r *http.Request) {
 	active, settings := s.effectiveMaintenance()
 	message := strings.TrimSpace(settings.Message)
 	if active && message == "" {
-		message = "Das System befindet sich derzeit im Wartungsmodus. Die Anmeldung ist nur für Administratoren möglich."
+		message = "Das System befindet sich derzeit im Wartungsmodus. Die Anmeldung ist nur für Administratoren und Developer möglich."
 	}
 	writeJSON(w, map[string]any{"success": true, "maintenance_mode": active, "message": message})
 }
@@ -34,7 +34,8 @@ func (s *state) effectiveMaintenanceWithError() (bool, maintenanceSettings, erro
 }
 
 func maintenanceLoginAllowed(p *editablePolicy, email string) bool {
-	return policyRole(p, strings.ToLower(strings.TrimSpace(email))) == "admin"
+	role := policyRole(p, strings.ToLower(strings.TrimSpace(email)))
+	return role == policyDeveloperRole || role == "admin"
 }
 
 func maintenanceRequestAllowed(enabled bool, p *editablePolicy, email string) bool {
@@ -158,7 +159,7 @@ func (s *state) loginHandler(w http.ResponseWriter, r *http.Request) {
 		p := s.authorizationPolicy()
 		if !maintenanceLoginAllowed(p, email) {
 			s.logout(session)
-			writeHTMLError(w, "Das System befindet sich im Wartungsmodus. Die Anmeldung ist nur für Administratoren möglich.")
+			writeHTMLError(w, "Das System befindet sich im Wartungsmodus. Die Anmeldung ist nur für Administratoren und Developer möglich.")
 			return
 		}
 	}

@@ -66,9 +66,6 @@ Ext.define(
                 'ownercombo': {
                     select: this.onOwnerSelected
                 },
-                'initialownercombo': {
-                    select: this.onOwnerSelected
-                },
                 'mainview > panel > toolbar > historycombo': {
                     select: this.onPolicySelected,
                     beforequery: function (qe) {
@@ -110,14 +107,22 @@ Ext.define(
             this.updateThemeButton(window.PolicyWebTheme.get());
         }
 
-		// Administration is hidden by default and only exposed after the
-		// backend confirms an editor or administrator role.
+		// Operational views are hidden by default and only exposed after the
+		// backend confirms the corresponding immutable policy role.
 		Ext.Ajax.request({
 			url: 'backend6/admin/status',
 			method: 'GET',
 			success: function (response) {
 				var data = Ext.decode(response.responseText);
-				if (data.role === 'admin' || data.role === 'editor') {
+				if (data.role === 'admin' || data.role === 'editor' ||
+					data.role === 'reviewer' || data.role === 'deployer' ||
+					data.role === 'developer') {
+					var devicesButton = Ext.getCmp('btn_devices_tab');
+					if (devicesButton) { devicesButton.show(); }
+				}
+				if (data.role === 'admin' || data.role === 'editor' ||
+					data.role === 'reviewer' || data.role === 'deployer' ||
+					data.role === 'developer') {
 					var button = Ext.getCmp('btn_admin_tab');
 					if (button) { button.show(); }
 				}
@@ -347,6 +352,12 @@ Ext.define(
         var card = this.getMainCardPanel();
         var index = button.ownerCt.items.indexOf(button);
         var item = card.layout.setActiveItem(index);
+        if (button.getId() === 'btn_requests_tab' && item.loadRequests) {
+            item.loadRequests();
+        }
+        if (button.getId() === 'btn_devices_tab' && item.loadDevices) {
+            item.loadDevices();
+        }
         if (button.getId() === 'btn_admin_tab' && item.loadAdmin) {
             item.loadAdmin();
         }

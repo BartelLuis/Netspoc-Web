@@ -678,6 +678,11 @@ func (s *state) adminDeploy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "Policy deployer role required", http.StatusForbidden)
 		return
 	}
+	if s.config.FortiGateReadOnly {
+		s.audit(actor, "deployment.execute", "blocked", map[string]any{"error": errFortiGateReadOnly.Error()})
+		writeError(w, errFortiGateReadOnly.Error(), http.StatusConflict)
+		return
+	}
 
 	var request deployRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
@@ -1031,10 +1036,15 @@ func (s *state) finishDeploymentLog(result *deploymentRunResult) error {
 		return err
 	}
 	defer db.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	systems, _ := json.Marshal(result.Systems)
 	results, _ := json.Marshal(result.Results)
 	rollbackErrors, _ := json.Marshal(result.RollbackErrors)
-	updated, err := db.Exec(`UPDATE policy_deployment_log SET status=?, commands_applied=?, systems=?, results=?, error=?, rollback_attempted=?, rollback_succeeded=?, rollback_errors=?, finished_at=? WHERE deployment_id=?`,
+	updated, err := tx.Exec(`UPDATE policy_deployment_log SET status=?, commands_applied=?, systems=?, results=?, error=?, rollback_attempted=?, rollback_succeeded=?, rollback_errors=?, finished_at=? WHERE deployment_id=?`,
 		result.Status, result.CommandsApplied, string(systems), string(results), result.Error, result.RollbackAttempted, result.RollbackSucceeded, string(rollbackErrors), result.FinishedAt, result.DeploymentID)
 	if err != nil {
 		return err
@@ -1046,7 +1056,10 @@ func (s *state) finishDeploymentLog(result *deploymentRunResult) error {
 	if count != 1 {
 		return errors.New("deployment protocol row is missing")
 	}
-	return nil
+	if err := updateLinkedPolicyRequestDeploymentTx(tx, result); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *state) releaseDeploymentLock(deploymentID string) {

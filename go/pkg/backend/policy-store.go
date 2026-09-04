@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -22,7 +23,11 @@ func (s *state) policyDB() (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+	// Every policyDB handle uses one configured connection. The bounded busy
+	// wait lets concurrent publication/request writers serialize instead of
+	// surfacing an immediate SQLITE_BUSY race to the HTTP layer.
+	db.SetMaxOpenConns(1)
+	if _, err = db.Exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
 		CREATE TABLE IF NOT EXISTS policy_draft (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			document TEXT NOT NULL,
@@ -49,6 +54,91 @@ func (s *state) policyDB() (*sql.DB, error) {
 			result TEXT NOT NULL,
 			metadata TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS policy_account_state (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			version INTEGER NOT NULL CHECK (version >= 0),
+			initialized_at TEXT NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS policy_account (
+			email TEXT PRIMARY KEY COLLATE NOCASE,
+			role TEXT NOT NULL,
+			source TEXT NOT NULL CHECK (source IN ('local', 'ldap')),
+			directory_id TEXT NOT NULL DEFAULT '',
+			username TEXT NOT NULL DEFAULT '',
+			active INTEGER NOT NULL CHECK (active IN (0, 1)),
+			revision INTEGER NOT NULL CHECK (revision >= 1),
+			created_at TEXT NOT NULL,
+			created_by TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			updated_by TEXT NOT NULL
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS policy_account_directory_id
+			ON policy_account(directory_id) WHERE directory_id <> '';
+		CREATE TABLE IF NOT EXISTS policy_request (
+			id TEXT PRIMARY KEY,
+			type TEXT NOT NULL CHECK (type IN ('rule_change', 'new_service')),
+			requester TEXT NOT NULL,
+			active_owner TEXT NOT NULL,
+			base_version TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('submitted', 'processing', 'staged', 'approved', 'deployed', 'rejected', 'conflict')),
+			revision INTEGER NOT NULL DEFAULT 1,
+			revision_version TEXT NOT NULL DEFAULT '',
+			rejection_comment TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS policy_request_requester_created
+			ON policy_request(requester, created_at DESC);
+		CREATE INDEX IF NOT EXISTS policy_request_status_created
+			ON policy_request(status, created_at DESC);
+		CREATE INDEX IF NOT EXISTS policy_request_created
+			ON policy_request(created_at DESC, id DESC);
+		CREATE TABLE IF NOT EXISTS policy_request_event (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			request_id TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			action TEXT NOT NULL,
+			from_status TEXT NOT NULL DEFAULT '',
+			to_status TEXT NOT NULL DEFAULT '',
+			comment TEXT NOT NULL DEFAULT '',
+			metadata TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL,
+			FOREIGN KEY(request_id) REFERENCES policy_request(id)
+		);
+		CREATE INDEX IF NOT EXISTS policy_request_event_request
+			ON policy_request_event(request_id, id);
+		CREATE TABLE IF NOT EXISTS policy_request_revision (
+			request_id TEXT NOT NULL,
+			revision_version TEXT NOT NULL UNIQUE,
+			linked_at TEXT NOT NULL,
+			linked_by TEXT NOT NULL,
+			PRIMARY KEY(request_id, revision_version),
+			FOREIGN KEY(request_id) REFERENCES policy_request(id),
+			FOREIGN KEY(revision_version) REFERENCES policy_revision(version)
+		);
+		CREATE TABLE IF NOT EXISTS managed_fortigate (
+			id TEXT PRIMARY KEY,
+			canonical_name TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			url TEXT NOT NULL,
+			vdom TEXT NOT NULL,
+			ca_pem TEXT NOT NULL DEFAULT '',
+			credential_id TEXT NOT NULL UNIQUE,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			revision INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL,
+			created_by TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			updated_by TEXT NOT NULL
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS managed_fortigate_scope
+			ON managed_fortigate(url, vdom);
+		CREATE TABLE IF NOT EXISTS managed_fortigate_credential_cleanup (
+			credential_id TEXT PRIMARY KEY,
+			not_before INTEGER NOT NULL
 		);`); err != nil {
 		db.Close()
 		return nil, err
@@ -74,6 +164,10 @@ func (s *state) policyDB() (*sql.DB, error) {
 			db.Close()
 			return nil, err
 		}
+	}
+	if err = s.migratePolicyAccounts(db); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return db, nil
 }
@@ -227,16 +321,18 @@ func (s *state) storeRevisionWithMetadata(version, base string, p *editablePolic
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`INSERT INTO policy_revision(version, base_version, document, changes, status, created_at, created_by, comment, change_reference, findings, deployment_plan, validation) VALUES(?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`, version, base, string(document), string(diff), time.Now().UTC().Format(time.RFC3339Nano), meta.CreatedBy, meta.Comment, meta.ChangeReference, string(findings), string(plan), string(validation))
-	return err
-}
-
-func (s *state) loadRevision(version string) (*editablePolicy, string, error) {
-	record, err := s.loadRevisionRecord(version, true)
+	tx, err := db.Begin()
 	if err != nil {
-		return nil, "", err
+		return err
 	}
-	return record.Policy, record.Base, nil
+	defer tx.Rollback()
+	if err := fencePolicyAccountsTx(tx, p); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO policy_revision(version, base_version, document, changes, status, created_at, created_by, comment, change_reference, findings, deployment_plan, validation) VALUES(?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`, version, base, string(document), string(diff), time.Now().UTC().Format(time.RFC3339Nano), meta.CreatedBy, meta.Comment, meta.ChangeReference, string(findings), string(plan), string(validation)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *state) loadRevisionRecord(version string, pendingOnly bool) (*policyRevisionRecord, error) {
@@ -274,12 +370,11 @@ func (s *state) loadRevisionRecord(version string, pendingOnly bool) (*policyRev
 		record.Changes = []policyChange{}
 	}
 	normalizeEditablePolicy(&p)
+	if err := s.attachPolicyAccounts(&p); err != nil {
+		return nil, err
+	}
 	record.Policy = &p
 	return record, nil
-}
-
-func (s *state) markRevisionPublished(version string) error {
-	return s.markRevisionPublishedBy(version, "")
 }
 
 func (s *state) markRevisionPublishedBy(version, actor string) error {
@@ -298,18 +393,28 @@ func (s *state) markRevisionPublishedBy(version, actor string) error {
 }
 
 func (s *state) rejectRevision(version, actor, comment string) error {
+	allowSelfRejection := bypassesFourEyes(s.authorizationPolicy(), actor)
 	db, err := s.policyDB()
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	result, err := db.Exec(`UPDATE policy_revision SET status='rejected', rejected_at=?, rejected_by=?, rejection_comment=? WHERE version=? AND status='pending'`, time.Now().UTC().Format(time.RFC3339Nano), actor, comment, version)
-	if err == nil {
-		if count, _ := result.RowsAffected(); count != 1 {
-			return errors.New("revision is not pending")
-		}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
 	}
-	return err
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE policy_revision SET status='rejected', rejected_at=?, rejected_by=?, rejection_comment=? WHERE version=? AND status='pending'`, time.Now().UTC().Format(time.RFC3339Nano), actor, comment, version)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return errors.New("revision is not pending")
+	}
+	if err := rejectLinkedPolicyRequestTx(tx, version, actor, comment, allowSelfRejection); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *state) listRevisions() ([]policyRevisionSummary, error) {
@@ -391,6 +496,9 @@ func (s *state) latestPublicationSnapshot() (*editablePolicy, string, error) {
 		return nil, "", err
 	}
 	normalizeEditablePolicy(&p)
+	if err := s.attachPolicyAccounts(&p); err != nil {
+		return nil, "", err
+	}
 	return &p, version, nil
 }
 
@@ -421,14 +529,24 @@ func (s *state) loadPolicyDraft() (*editablePolicy, error) {
 		// One-time migration from the original JSON draft store.
 		data, readErr := os.ReadFile(s.draftPath())
 		if readErr != nil {
-			return &editablePolicy{Name: "policy"}, nil
+			if !errors.Is(readErr, os.ErrNotExist) {
+				return nil, fmt.Errorf("read legacy policy draft: %w", readErr)
+			}
+			p := &editablePolicy{Name: "policy"}
+			if err := s.attachPolicyAccounts(p); err != nil {
+				return nil, err
+			}
+			return p, nil
 		}
 		var p editablePolicy
-		if json.Unmarshal(data, &p) != nil {
-			return &editablePolicy{Name: "policy"}, nil
+		if err := json.Unmarshal(data, &p); err != nil {
+			return nil, fmt.Errorf("decode legacy policy draft: %w", err)
 		}
 		normalizeEditablePolicy(&p)
 		if err := s.storePolicyDraft(db, &p); err != nil {
+			return nil, err
+		}
+		if err := s.attachPolicyAccounts(&p); err != nil {
 			return nil, err
 		}
 		return &p, nil
@@ -441,6 +559,9 @@ func (s *state) loadPolicyDraft() (*editablePolicy, error) {
 		return nil, fmt.Errorf("decode policy draft: %w", err)
 	}
 	normalizeEditablePolicy(&p)
+	if err := s.attachPolicyAccounts(&p); err != nil {
+		return nil, err
+	}
 	return &p, nil
 }
 
@@ -459,16 +580,31 @@ func normalizeEditablePolicy(p *editablePolicy) {
 		}
 	}
 	for i := range p.Services {
+		defaultOwner := ""
+		if len(p.Services[i].Owners) != 0 {
+			defaultOwner = strings.TrimSpace(p.Services[i].Owners[0])
+		}
 		for j := range p.Services[i].Rules {
 			rule := &p.Services[i].Rules[j]
 			rule.HasUser = strings.ToLower(strings.TrimSpace(rule.HasUser))
 			if rule.HasUser == "" {
 				rule.HasUser = "src"
 			}
-			if len(p.TargetContexts) != 0 && !stableIDRE.MatchString(rule.StableRuleID) {
-				rule.StableRuleID = newStableRuleID()
-				rule.ShortID = ""
+			if strings.TrimSpace(rule.RuleGroup) == "" {
+				rule.RuleGroup = "SRV"
 			}
+			if strings.TrimSpace(rule.Owner) == "" {
+				rule.Owner = defaultOwner
+			}
+			if strings.TrimSpace(rule.TargetContext) == "" && len(p.TargetContexts) != 0 {
+				rule.TargetContext = p.TargetContexts[0].Name
+			}
+			// Loading drafts, revisions and publications also calls this helper.
+			// Never create random identity data while reading immutable history:
+			// two byte-identical legacy documents would otherwise normalize to
+			// different values and fail their publication/revision binding check.
+			// prepareManualPolicyNames creates missing identities only on a
+			// validated write or staging path.
 		}
 	}
 }
@@ -489,6 +625,9 @@ func (s *state) storePolicyDraftVersion(db *sql.DB, p *editablePolicy, actor str
 		return draftMetadata{}, err
 	}
 	defer tx.Rollback()
+	if err := fencePolicyAccountsTx(tx, p); err != nil {
+		return draftMetadata{}, err
+	}
 	var current int64
 	err = tx.QueryRow(`SELECT version FROM policy_draft WHERE id=1`).Scan(&current)
 	if err == sql.ErrNoRows {
@@ -524,6 +663,11 @@ func (s *state) storePublicationBy(version string, p *editablePolicy, actor, sou
 // finalizePublication commits the immutable publication and, for reviewed
 // changes, the pending-to-published transition in one SQLite transaction.
 func (s *state) finalizePublication(version string, p *editablePolicy, actor string, requirePending bool) error {
+	return s.finalizePublicationWithSetupClaim(version, p, actor, requirePending, "")
+}
+
+func (s *state) finalizePublicationWithSetupClaim(version string, p *editablePolicy, actor string, requirePending bool, setupClaimID string) error {
+	allowSelfApproval := requirePending && bypassesFourEyes(s.authorizationPolicy(), actor)
 	db, err := s.policyDB()
 	if err != nil {
 		return err
@@ -538,6 +682,9 @@ func (s *state) finalizePublication(version string, p *editablePolicy, actor str
 		return err
 	}
 	defer tx.Rollback()
+	if err := fencePolicyAccountsTx(tx, p); err != nil {
+		return err
+	}
 	// Publication and deployment share a database-level interlock. Checking in
 	// this transaction prevents the meaning of "latest published revision"
 	// from changing while a confirmed deployment is in flight. Installations
@@ -557,6 +704,22 @@ func (s *state) finalizePublication(version string, p *editablePolicy, actor str
 			return lockErr
 		}
 	}
+	if setupClaimID != "" {
+		var activeClaim string
+		if err := tx.QueryRow(`SELECT claim_id FROM policy_setup_guard WHERE id=1`).Scan(&activeClaim); err != nil {
+			return err
+		}
+		if subtle.ConstantTimeCompare([]byte(activeClaim), []byte(setupClaimID)) != 1 {
+			return errSetupAlreadyClaimed
+		}
+		setupActor := strings.ToLower(strings.TrimSpace(actor))
+		if setupActor == "" && len(p.Users) != 0 {
+			setupActor = "setup:" + strings.ToLower(strings.TrimSpace(p.Users[0].Email))
+		}
+		if err := s.seedSetupAccountsTx(tx, p.Users, setupActor); err != nil {
+			return err
+		}
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err = tx.Exec(`INSERT INTO policy_publication(version, document, published_at, published_by, source_revision) VALUES(?, ?, ?, ?, ?)`, version, string(data), now, actor, version); err != nil {
 		return err
@@ -569,6 +732,12 @@ func (s *state) finalizePublication(version string, p *editablePolicy, actor str
 		if count, _ := result.RowsAffected(); count != 1 {
 			return errors.New("revision is not pending")
 		}
+		if err := approveLinkedPolicyRequestTx(tx, version, actor, allowSelfApproval); err != nil {
+			return err
+		}
+	}
+	if err := conflictObsoletePolicyRequestsTx(tx, version, actor); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -588,6 +757,9 @@ func (s *state) loadPublication(version string) (*editablePolicy, error) {
 		return nil, err
 	}
 	normalizeEditablePolicy(&p)
+	if err := s.attachPolicyAccounts(&p); err != nil {
+		return nil, err
+	}
 	return &p, nil
 }
 
@@ -607,6 +779,10 @@ func (s *state) latestPublication() (*editablePolicy, error) {
 	}
 	var p editablePolicy
 	if err := json.Unmarshal([]byte(document), &p); err != nil {
+		return nil, err
+	}
+	normalizeEditablePolicy(&p)
+	if err := s.attachPolicyAccounts(&p); err != nil {
 		return nil, err
 	}
 	return &p, nil

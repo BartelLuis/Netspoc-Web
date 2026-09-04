@@ -15,13 +15,13 @@ const ldapSyncPreviewLifetime = 15 * time.Minute
 
 var (
 	errLDAPPreviewInvalid = errors.New("LDAP sync preview is invalid or expired")
-	errLDAPPreviewStale   = errors.New("draft changed after LDAP sync preview")
+	errLDAPPreviewStale   = errors.New("user accounts changed after LDAP sync preview")
 )
 
 type storedLDAPSyncPreview struct {
 	Token        string
 	Actor        string
-	DraftVersion int64
+	UsersVersion int64
 	ExpiresAt    string
 	Added        int
 	Updated      int
@@ -49,7 +49,7 @@ func ldapPreviewTokenHash(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *state) storeLDAPSyncPreview(actor string, draftVersion int64, preview ldapSyncPreview) (storedLDAPSyncPreview, error) {
+func (s *state) storeLDAPSyncPreview(actor string, usersVersion int64, preview ldapSyncPreview) (storedLDAPSyncPreview, error) {
 	document, err := json.Marshal(preview.Users)
 	if err != nil {
 		return storedLDAPSyncPreview{}, err
@@ -75,7 +75,7 @@ func (s *state) storeLDAPSyncPreview(actor string, draftVersion int64, preview l
 		return storedLDAPSyncPreview{}, err
 	}
 	if _, err := tx.Exec(`INSERT INTO ldap_sync_preview(token_hash, actor, draft_version, document, added, updated, disabled, created_at, expires_at)
-		VALUES(?,?,?,?,?,?,?,?,?)`, ldapPreviewTokenHash(token), actor, draftVersion, string(document), preview.Added, preview.Updated, preview.Disabled,
+		VALUES(?,?,?,?,?,?,?,?,?)`, ldapPreviewTokenHash(token), actor, usersVersion, string(document), preview.Added, preview.Updated, preview.Disabled,
 		now.Format(time.RFC3339Nano), expires.Format(time.RFC3339Nano)); err != nil {
 		return storedLDAPSyncPreview{}, err
 	}
@@ -83,7 +83,7 @@ func (s *state) storeLDAPSyncPreview(actor string, draftVersion int64, preview l
 		return storedLDAPSyncPreview{}, err
 	}
 	return storedLDAPSyncPreview{
-		Token: token, Actor: actor, DraftVersion: draftVersion, ExpiresAt: expires.Format(time.RFC3339Nano),
+		Token: token, Actor: actor, UsersVersion: usersVersion, ExpiresAt: expires.Format(time.RFC3339Nano),
 		Added: preview.Added, Updated: preview.Updated, Disabled: preview.Disabled, Users: preview.Users,
 	}, nil
 }
@@ -106,7 +106,7 @@ func (s *state) loadLDAPSyncPreview(actor, token string) (storedLDAPSyncPreview,
 	var document string
 	err = db.QueryRow(`SELECT actor, draft_version, document, added, updated, disabled, expires_at
 		FROM ldap_sync_preview WHERE token_hash = ? AND actor = ?`, ldapPreviewTokenHash(token), actor).
-		Scan(&result.Actor, &result.DraftVersion, &document, &result.Added, &result.Updated, &result.Disabled, &result.ExpiresAt)
+		Scan(&result.Actor, &result.UsersVersion, &document, &result.Added, &result.Updated, &result.Disabled, &result.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedLDAPSyncPreview{}, errLDAPPreviewInvalid
 	}

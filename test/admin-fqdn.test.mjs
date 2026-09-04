@@ -70,10 +70,11 @@ test('rule user side survives render and serialization, with legacy values defau
   }
 });
 
-test('policy serialization emits the top-level FQDN contract', () => {
+test('policy serialization emits FQDNs and preserves hidden legacy metadata opaquely', () => {
   const valuesSource = adminScript.split('\n').find((line) => line.startsWith('function values('));
+  const preserveSource = adminScript.split('\n').find((line) => line.startsWith('function preserveLegacyPolicyMetadata('));
   const policySource = adminScript.split('\n').find((line) => line.startsWith('function policy('));
-  assert.ok(valuesSource && policySource, 'serialization functions are missing');
+  assert.ok(valuesSource && preserveSource && policySource, 'serialization functions are missing');
 
   const fqdn = { fields: [] };
   fqdn.fields = [
@@ -83,7 +84,8 @@ test('policy serialization emits the top-level FQDN contract', () => {
   ];
 
   const context = {
-    namingCatalog: { version: 'v1' },
+    legacyPolicyMetadata: {},
+    legacyPolicyFieldNames: ['tenants', 'target_contexts', 'naming_catalog'],
     split: (value) => value.split(',').map((part) => part.trim()).filter(Boolean),
     $: (selector) => {
       if (selector === '#policy-name') return { value: 'policy' };
@@ -92,19 +94,23 @@ test('policy serialization emits the top-level FQDN contract', () => {
     $$: (selector, root) => {
       if (selector === '[data-field]' && root === fqdn) return fqdn.fields;
       if (selector === '.fqdn') return [fqdn];
-      if (['.user', '.owner', '.tenant', '.target-context', '.network', '.service'].includes(selector)) return [];
+      if (['.owner', '.network', '.service'].includes(selector)) return [];
       throw new Error(`Unexpected selector: ${selector}`);
     },
   };
   vm.createContext(context);
-  vm.runInContext(`${valuesSource}\n${policySource}`, context);
+  vm.runInContext(`${valuesSource}\n${preserveSource}\n${policySource}`, context);
+  context.preserveLegacyPolicyMetadata({
+    tenants: [{ mkz: 'M120', untouched: { value: true } }],
+    target_contexts: [{ name: 'legacy-context', context_type: 'dedicated' }],
+    naming_catalog: { version: 'v1', future_field: ['opaque'] },
+  });
 
   assert.deepEqual(JSON.parse(JSON.stringify(context.policy())), {
     name: 'policy',
-    tenants: [],
-    target_contexts: [],
-    naming_catalog: { version: 'v1' },
-    users: [],
+    tenants: [{ mkz: 'M120', untouched: { value: true } }],
+    target_contexts: [{ name: 'legacy-context', context_type: 'dedicated' }],
+    naming_catalog: { version: 'v1', future_field: ['opaque'] },
     owners: [],
     networks: [],
     fqdns: [{ name: 'web-api', fqdn: 'api.example.org', owner: 'NOC' }],

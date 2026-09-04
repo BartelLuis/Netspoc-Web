@@ -48,13 +48,17 @@ func TestMaintenanceStatusDefaultMessage(t *testing.T) {
 	}
 }
 
-func TestMaintenanceLoginOnlyAllowsPolicyAdmins(t *testing.T) {
+func TestMaintenanceLoginOnlyAllowsPolicyAdminsAndDevelopers(t *testing.T) {
 	p := &editablePolicy{Users: []editableUser{
 		{Email: "admin@example.org", Role: "admin"},
+		{Email: "developer@example.org", Role: policyDeveloperRole},
 		{Email: "editor@example.org", Role: "editor"},
 	}}
 	if !maintenanceLoginAllowed(p, " ADMIN@example.org ") {
 		t.Fatal("administrator was rejected")
+	}
+	if !maintenanceLoginAllowed(p, "developer@example.org") {
+		t.Fatal("developer was rejected")
 	}
 	if maintenanceLoginAllowed(p, "editor@example.org") {
 		t.Fatal("editor was accepted")
@@ -146,6 +150,7 @@ func TestMaintenanceDatabaseFailureIsFailClosedAndPublicStatusIsSafe(t *testing.
 func TestMaintenanceSchemaFailureIsFailClosedButAdminsRemainAllowed(t *testing.T) {
 	s := persistentMaintenanceTestState(t)
 	p := validEditablePolicy()
+	seedPolicyTestAccounts(t, s, p.Users...)
 	if err := s.storePublication("maintenance-schema-auth", p); err != nil {
 		t.Fatal(err)
 	}

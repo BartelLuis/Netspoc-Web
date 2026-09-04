@@ -22,7 +22,8 @@ phases and acceptance gates below.
    timestamp and content hash. Drafts are mutable; published revisions are not.
 4. **Authorization service** derives access from application roles rather than
    generated `email` files. At minimum it supports administrator, policy editor,
-   reviewer, deployer and read-only viewer, scoped to responsibility areas.
+   reviewer, deployer, unrestricted developer and read-only viewer, scoped to
+   responsibility areas except for the developer super-role.
 5. **Vendor-neutral intermediate representation (IR)** expands groups and
    inherited networks, resolves rules and NAT, and produces deterministic input
    for device drivers.

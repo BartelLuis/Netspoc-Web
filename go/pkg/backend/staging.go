@@ -50,7 +50,7 @@ func decodeStagePolicy(raw json.RawMessage) (*editablePolicy, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("policy is required")
 	}
-	var p editablePolicy
+	var p policyDocument
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&p); err != nil {
@@ -59,7 +59,7 @@ func decodeStagePolicy(raw json.RawMessage) (*editablePolicy, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, errors.New("invalid policy: multiple JSON documents")
 	}
-	return &p, nil
+	return p.editable(), nil
 }
 
 // adminStage freezes the exact policy and deployment plan that a second person
@@ -73,7 +73,7 @@ func (s *state) adminStage(w http.ResponseWriter, r *http.Request) {
 	actor := getEmailFromSession(r)
 	current := s.readDraft()
 	role := policyRole(s.authorizationPolicy(), actor)
-	if role != "admin" && role != "editor" {
+	if role != policyDeveloperRole && role != "admin" && role != "editor" {
 		s.audit(actor, "revision.stage", "denied", nil)
 		writeError(w, "Policy editor role required", http.StatusForbidden)
 		return
@@ -96,13 +96,13 @@ func (s *state) adminStage(w http.ResponseWriter, r *http.Request) {
 		p, err = decodeStagePolicy(request.Policy)
 	}
 	if err == nil {
+		err = s.attachPolicyAccounts(p)
+	}
+	if err == nil {
 		err = protectDirectoryUsers(current, p)
 	}
 	if err == nil {
-		err = enforceNamingCatalogVersion(current, p)
-	}
-	if err == nil {
-		protectRuleIdentities(current, p)
+		protectManualRuleIdentities(current, p)
 	}
 	if err == nil && role == "editor" {
 		err = enforceEditorPolicyScope(current, p)
@@ -164,7 +164,7 @@ func (s *state) adminStage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, errDraftConflict) {
+		if errors.Is(err, errDraftConflict) || errors.Is(err, errAccountConflict) {
 			status = http.StatusConflict
 		}
 		s.audit(actor, "revision.stage", "failed", map[string]any{"error": err.Error()})

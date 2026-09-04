@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Policy-Web Antragswesen</title>
+  <script src="resources/js/theme.js"></script>
+  <style>
+    :root { color-scheme:light; font:14px Arial,sans-serif; background:#eef3f7; color:#293b49 }
+    * { box-sizing:border-box }
+    body { margin:0 }
+    header { background:linear-gradient(#eaf2f8,#c9d9e8); border-bottom:1px solid #99bce8; color:#234; padding:.55rem 1rem; display:flex; justify-content:space-between; align-items:center }
+    main { max-width:1400px; margin:auto; padding:14px }
+    h1,h2,h3 { margin:0 0 8px }
+    p { line-height:1.45 }
+    .card { background:#fff; border:1px solid #b5c8d8; border-radius:4px; padding:14px; margin:0 0 12px; box-shadow:0 1px 2px rgba(45,73,94,.08) }
+    .intro,.section-head { display:flex; justify-content:space-between; align-items:flex-start; gap:18px }
+    .intro p,.section-head p,.field-help { margin:3px 0 0; color:#526574 }
+    .form-grid { display:grid; grid-template-columns:repeat(2,minmax(230px,1fr)); gap:12px }
+    .wide { grid-column:1/-1 }
+    label { display:flex; flex-direction:column; gap:.35rem; font-weight:600 }
+    input,select,textarea { width:100%; padding:.58rem; border:1px solid #9babb7; border-radius:4px; font:inherit }
+    select[multiple] { min-height:145px }
+    textarea { min-height:90px; resize:vertical }
+    button,.button { border:1px solid #a9bfd3; border-radius:3px; padding:8px 12px; cursor:pointer; background:linear-gradient(#fff,#dce7f0); color:#234; text-decoration:none; white-space:nowrap }
+    button.primary { border-color:#518fbd; background:linear-gradient(#dcefff,#9fc7e7); font-weight:600 }
+    button:disabled { opacity:.55; cursor:not-allowed }
+    .actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:14px }
+    .field-help { display:block; font-size:12px; font-weight:normal; line-height:1.4 }
+    .fixed-values { display:flex; gap:8px; flex-wrap:wrap; margin:0 }
+    .chip { display:inline-block; border-radius:12px; background:#dceaf4; color:#285879; padding:4px 9px; font-weight:600 }
+    .table-scroll { overflow-x:auto; margin-top:12px }
+    table { width:100%; border-collapse:collapse }
+    th,td { border-bottom:1px solid #d4dee6; padding:9px 8px; text-align:left; vertical-align:top }
+    th { background:#eef3f7; color:#45667d; font-size:12px; white-space:nowrap }
+    tr:last-child td { border-bottom:0 }
+    .request-id { font-family:Consolas,monospace; font-size:12px; overflow-wrap:anywhere }
+    .request-details { margin-top:5px }
+    .request-details summary { cursor:pointer; color:#285879 }
+    .request-details pre { max-width:760px; max-height:240px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; background:#eef3f7; border-radius:3px; padding:8px; font:12px Consolas,monospace }
+    .status { display:inline-block; border-radius:10px; background:#e6edf2; color:#39566a; padding:2px 7px; font-size:12px; font-weight:600 }
+    .status.deployed,.status.completed { background:#dcefe3; color:#176b35 }
+    .status.rejected,.status.failed { background:#f8dddd; color:#8b1a1a }
+    .status.pending,.status.staged,.status.approved,.status.published { background:#fff0ca; color:#715516 }
+    .empty { padding:24px; text-align:center; color:#70818e }
+    .error { color:#a01818 }
+    .success { color:#176b35 }
+    #message { min-height:20px }
+    @media(max-width:760px){.form-grid{grid-template-columns:1fr}.wide{grid-column:auto}.intro,.section-head{flex-direction:column}}
+  </style>
+  <link rel="stylesheet" href="resources/css/theme-static.css">
+</head>
+<body>
+<header><div><strong>Policy-Web</strong> · Antragswesen</div><div class="pw-header-actions"><button class="pw-theme-toggle" data-policyweb-theme-toggle type="button">Dark Mode</button><a class="button" href="/app.html">Übersicht</a></div></header>
+<main>
+  <section class="card intro">
+    <div><h1>Antragswesen</h1><p>Neue Dienste und Änderungen an bestehenden Regeln nachvollziehbar beantragen. Grundsätzlich gilt anschließend das Vier-Augen-Prinzip; die Rolle Developer darf auch eigene Anträge entscheiden.</p></div>
+    <div><strong>Verantwortungsbereich:</strong> <span id="active-owner">–</span></div>
+  </section>
+
+  <section class="card" aria-labelledby="new-service-title">
+    <div class="section-head"><div><h2 id="new-service-title">Neuen Dienst beantragen</h2><p>Quellen und Ziele können ausschließlich aus vorhandenen Objekten des gewählten Verantwortungsbereichs ausgewählt werden.</p></div></div>
+    <form id="service-request-form" autocomplete="off">
+      <div class="form-grid">
+        <label>Dienstname<input id="service-name" name="name" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9_.:-]*" placeholder="web-portal"></label>
+        <label>Regelname<input id="service-rule-name" name="policy_name" required maxlength="35" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,34}" title="Maximal 35 Zeichen; beginnt mit einem Buchstaben oder einer Ziffer, danach sind auch Unterstrich und Bindestrich erlaubt" placeholder="APP_WEB_HTTPS"><span class="field-help">Maximal 35 Zeichen; beginnt mit einem Buchstaben oder einer Ziffer, danach sind auch <code>_</code> und <code>-</code> erlaubt.</span></label>
+        <label>Verantwortungsbereich<select id="service-owner" name="owner" required><option value="">Daten werden geladen …</option></select></label>
+        <label class="wide">Beschreibung<textarea id="service-description" name="description" maxlength="2000" required placeholder="Fachlicher Zweck des neuen Dienstes"></textarea></label>
+        <label>Quellen<select id="service-sources" name="sources" multiple required aria-describedby="source-help"></select><span id="source-help" class="field-help">Mehrere Einträge mit Strg/Befehlstaste auswählen.</span></label>
+        <label>Ziele<select id="service-destinations" name="destinations" multiple required aria-describedby="destination-help"></select><span id="destination-help" class="field-help">FQDNs sind nur als Ziel auswählbar.</span></label>
+        <label class="wide">Ports/Protokolle<input id="service-protocols" name="protocols" required maxlength="1000" placeholder="tcp 443, udp 53"><span class="field-help">Kommasepariert, z. B. <code>tcp 443</code>, <code>udp 53</code> oder <code>icmp</code>.</span></label>
+        <div class="wide"><strong>Feste Regelwerte</strong><p class="fixed-values"><span class="chip">Aktion: Erlauben</span><span class="chip">Benutzerseite: Keine</span></p></div>
+        <label class="wide">Antragsbegründung<textarea id="request-reason" name="reason" required maxlength="2000" placeholder="Warum wird diese Freischaltung benötigt?"></textarea></label>
+      </div>
+      <div class="actions"><button id="submit-service-request" class="primary" type="submit" disabled>Antrag einreichen</button><div id="message" role="status" aria-live="polite"></div></div>
+    </form>
+  </section>
+
+  <section class="card" aria-labelledby="my-requests-title">
+    <div class="section-head"><div><h2 id="my-requests-title">Meine Anträge</h2><p>Status der von Ihnen eingereichten Dienst- und Regeländerungsanträge.</p></div><button id="refresh-requests" type="button">Aktualisieren</button></div>
+    <div class="table-scroll"><table><thead><tr><th>ID</th><th>Typ</th><th>Inhalt</th><th>Status</th><th>Erstellt</th></tr></thead><tbody id="request-list"><tr><td colspan="5" class="empty">Anträge werden geladen …</td></tr></tbody></table></div>
+  </section>
+</main>
+<script>
+'use strict';
+const $=(selector,root=document)=>root.querySelector(selector);
+const embedded=new URLSearchParams(location.search).has('embedded');
+if(embedded){$('header').style.display='none';$('main').style.maxWidth='none';}
+
+let currentOwner='',baseVersion='',contextReady=false,loadGeneration=0;
+const form=$('#service-request-form'),submitButton=$('#submit-service-request');
+
+function parentOwner(){
+  try{
+    if(window.parent!==window&&window.parent.appstate&&typeof window.parent.appstate.getOwner==='function')return window.parent.appstate.getOwner()||'';
+  }catch(error){}
+  return new URLSearchParams(location.search).get('active_owner')||'';
+}
+
+async function request(path,options={}){
+  const headers={Accept:'application/json',...(options.headers||{})};
+  const response=await fetch('backend6/'+path,{...options,cache:'no-store',credentials:'same-origin',headers});
+  let data;
+  try{data=await response.json()}catch(error){throw new Error(`Ungültige Serverantwort (HTTP ${response.status})`)}
+  if(!response.ok||data.success===false){const failure=new Error(data.msg||data.message||`HTTP ${response.status}`);failure.status=response.status;failure.data=data;throw failure}
+  return data;
+}
+
+function setMessage(text,isError=false){const node=$('#message');node.textContent=text||'';node.className=isError?'error':'success'}
+function asArray(value){return Array.isArray(value)?value:[]}
+function textValue(item,keys){if(typeof item==='string')return item;if(!item||typeof item!=='object')return '';for(const key of keys){if(item[key]!==undefined&&item[key]!==null)return String(item[key])}return ''}
+function uniqueItems(items){const seen=new Set();return items.filter(item=>{if(!item.value||seen.has(item.value))return false;seen.add(item.value);return true})}
+
+function referenceItems(data,kind){
+  const specific=kind==='source'?(data.source_refs||data.sources):(data.destination_refs||data.destinations);
+  const combined=[];
+  const add=(items,prefix='')=>asArray(items).forEach(item=>{
+    let value=textValue(item,['reference','ref','value','id','name']).trim();
+    if(value&&prefix&&!value.includes(':'))value=prefix+':'+value;
+    if(!/^(network|host|fqdn):/.test(value))return;
+    if(kind==='source'&&value.startsWith('fqdn:'))return;
+    const label=textValue(item,['label','display_name','description']).trim();
+    combined.push({value,label:label?`${value} · ${label}`:value});
+  });
+  if(Array.isArray(specific))add(specific);
+  else{
+    add(data.object_refs||data.object_references||data.references||data.objects);
+    add(data.networks,'network');add(data.hosts,'host');
+    if(kind==='destination')add(data.fqdns,'fqdn');
+  }
+  return uniqueItems(combined).sort((a,b)=>a.label.localeCompare(b.label,'de'));
+}
+
+function simpleItems(items,keys,prefix=''){
+  return uniqueItems(asArray(items).map(item=>{
+    let value=textValue(item,keys).trim();
+    if(value&&prefix&&!value.startsWith(prefix))value=prefix+value;
+    const label=textValue(item,['label','display_name','description']).trim();
+    return {value,label:label?`${value} · ${label}`:value};
+  })).sort((a,b)=>a.label.localeCompare(b.label,'de'));
+}
+
+function fillSelect(select,items,{blankLabel='',selected='',multiple=false}={}){
+  const fragment=document.createDocumentFragment();
+  if(blankLabel&&!multiple){const option=document.createElement('option');option.value='';option.textContent=blankLabel;fragment.append(option)}
+  for(const item of items){const option=document.createElement('option');option.value=item.value;option.textContent=item.label;option.selected=item.value===selected;fragment.append(option)}
+  select.replaceChildren(fragment);
+}
+
+function applyContext(data){
+  baseVersion=String(data.base_version||data.current_version||data.published_version||'');
+  if(data.current!==true)throw new Error('Anträge sind nur für den aktuellen Policy-Stand möglich.');
+  const owners=simpleItems(data.owners||data.accessible_owners,['name','value','id']);
+  fillSelect($('#service-owner'),owners,{blankLabel:'Verantwortungsbereich wählen',selected:currentOwner});
+  fillSelect($('#service-sources'),referenceItems(data,'source'),{multiple:true});
+  fillSelect($('#service-destinations'),referenceItems(data,'destination'),{multiple:true});
+  contextReady=Boolean(baseVersion&&owners.length&&$('#service-sources').options.length&&$('#service-destinations').options.length);
+  submitButton.disabled=!contextReady;
+  if(!contextReady)throw new Error('Die Antragsdaten sind unvollständig: Basisversion, Verantwortungsbereich oder vorhandene Objekte fehlen.')
+}
+
+function selectedValues(select){return [...select.selectedOptions].map(option=>option.value)}
+function splitProtocols(value){return value.split(',').map(item=>item.trim()).filter(Boolean)}
+
+function requestTypeLabel(record){
+  const type=record.request_type||record.type||record.kind||'';
+  return type==='new_service'||type==='service'?'Neuer Dienst':type==='rule_change'?'Regeländerung':type||'Antrag';
+}
+
+function requestSummary(record){
+  const payload=record.payload&&typeof record.payload==='object'?record.payload:{};
+  const service=record.new_service||record.service_request||record.service||payload.service||{};
+  const change=record.rule_change||payload;
+  if(record.summary)return String(record.summary);
+  if((record.request_type||record.type)==='rule_change')return [change.service,change.operation,change.field,change.value||asArray(change.values).join(', ')].filter(Boolean).join(' · ');
+  return textValue(service,['name'])||textValue(record,['service_name','name'])||'Neuer Dienst';
+}
+
+function requestDocument(record){
+  const copy={...record};
+  delete copy.approval;delete copy.approval_hash;delete copy.plan_hash;
+  try{return JSON.stringify(copy,null,2)}catch(error){return 'Details konnten nicht dargestellt werden.'}
+}
+
+function appendCell(row,text,className=''){const cell=document.createElement('td');cell.textContent=text;if(className)cell.className=className;row.append(cell);return cell}
+function renderRequests(data){
+  const records=asArray(data.records||data.items||data.requests);
+  const body=$('#request-list');body.replaceChildren();
+  if(!records.length){const row=document.createElement('tr');const cell=appendCell(row,'Noch keine Anträge.','empty');cell.colSpan=5;body.append(row);return}
+  for(const record of records){
+    const row=document.createElement('tr');
+    appendCell(row,String(record.request_id||record.id||'–'),'request-id');
+    appendCell(row,requestTypeLabel(record));
+    const content=appendCell(row,requestSummary(record));
+    const details=document.createElement('details');details.className='request-details';
+    const summary=document.createElement('summary');summary.textContent='Details anzeigen';
+    const pre=document.createElement('pre');pre.textContent=requestDocument(record);
+    details.append(summary,pre);content.append(details);
+    const status=String(record.status||'pending').toLowerCase();
+    const statusCell=document.createElement('td');const badge=document.createElement('span');badge.className='status '+status;badge.textContent=status;statusCell.append(badge);row.append(statusCell);
+    const created=record.created_at||record.submitted_at||'';let renderedDate=String(created||'–');if(created){const date=new Date(created);if(!Number.isNaN(date.getTime()))renderedDate=date.toLocaleString('de-DE')}
+    appendCell(row,renderedDate);body.append(row);
+  }
+}
+
+async function loadPage(){
+  const generation=++loadGeneration;currentOwner=parentOwner();$('#active-owner').textContent=currentOwner||'–';contextReady=false;submitButton.disabled=true;setMessage('');
+  if(!currentOwner){setMessage('Bitte zuerst einen Verantwortungsbereich auswählen.',true);renderRequests({records:[]});return}
+  try{
+    const query='?active_owner='+encodeURIComponent(currentOwner);
+    const [context,requests]=await Promise.all([request('requests/context'+query),request('requests'+query)]);
+    if(generation!==loadGeneration)return;
+    applyContext(context);renderRequests(requests);
+  }catch(error){if(generation!==loadGeneration)return;setMessage(error.message,true);renderRequests({records:[]})}
+}
+
+form.addEventListener('submit',async event=>{
+  event.preventDefault();setMessage('');
+  if(!contextReady||!form.reportValidity())return;
+  const sources=selectedValues($('#service-sources')),destinations=selectedValues($('#service-destinations')),protocols=splitProtocols($('#service-protocols').value);
+  if(!sources.length||!destinations.length||!protocols.length){setMessage('Mindestens eine Quelle, ein Ziel und ein Port/Protokoll sind erforderlich.',true);return}
+  const owner=$('#service-owner').value,reason=$('#request-reason').value.trim();
+  const rule={policy_name:$('#service-rule-name').value.trim(),action:'permit',has_user:'none',sources,destinations,protocols,owner};
+  const payload={request_type:'new_service',active_owner:currentOwner,base_version:baseVersion,reason,new_service:{name:$('#service-name').value.trim(),description:$('#service-description').value.trim(),owners:[owner],rules:[rule]}};
+  submitButton.disabled=true;submitButton.textContent='Antrag wird gespeichert …';
+  try{
+    const result=await request('requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const id=result.request_id||result.id||'';form.reset();await loadPage();setMessage(`Antrag${id?' '+id:''} wurde gespeichert.`);
+  }catch(error){setMessage(error.message,true)}finally{submitButton.textContent='Antrag einreichen';submitButton.disabled=!contextReady}
+});
+
+$('#refresh-requests').addEventListener('click',loadPage);
+try{
+  if(window.parent!==window&&window.parent.appstate&&typeof window.parent.appstate.addListener==='function')window.parent.appstate.addListener('ownerChanged',loadPage);
+}catch(error){}
+loadPage();
+</script>
+</body>
+</html>

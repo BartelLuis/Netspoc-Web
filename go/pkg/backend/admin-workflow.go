@@ -84,28 +84,11 @@ func (s *state) saveDraftAs(p *editablePolicy, actor string, expected *int64) (d
 	return s.storePolicyDraftVersion(db, p, strings.ToLower(actor), expected)
 }
 
-func (s *state) checkDraftVersion(expected *int64) error {
-	if expected == nil {
-		return nil
-	}
-	meta, err := s.draftInfo()
-	if err != nil {
-		return err
-	}
-	if meta.Version != *expected {
-		return errDraftConflict
-	}
-	return nil
-}
-
 func enforceEditorPolicyScope(current, next *editablePolicy) error {
 	if !reflect.DeepEqual(current.NamingCatalog, next.NamingCatalog) ||
 		!reflect.DeepEqual(current.Tenants, next.Tenants) ||
 		!reflect.DeepEqual(current.TargetContexts, next.TargetContexts) {
 		return errors.New("editors may not change the naming catalog, tenants or target contexts")
-	}
-	if !reflect.DeepEqual(current.Users, next.Users) {
-		return errors.New("editors may not change users or policy roles")
 	}
 	type ownerAccess struct {
 		Parent                              string
@@ -350,7 +333,7 @@ func (s *state) adminReject(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		var record *policyRevisionRecord
 		record, err = s.loadRevisionRecord(request.PolicyID, true)
-		if err == nil && strings.EqualFold(record.CreatedBy, actor) {
+		if err == nil && strings.EqualFold(record.CreatedBy, actor) && !bypassesFourEyes(s.authorizationPolicy(), actor) {
 			err = errors.New("revision creator may not reject their own revision")
 		}
 	}
@@ -546,27 +529,6 @@ func calculateLDAPSyncPreview(p *editablePolicy, entries []ldapIdentity) (ldapSy
 	return preview, nil
 }
 
-func (s *state) loadPolicyDraftSnapshot() (*editablePolicy, draftMetadata, error) {
-	for range 3 {
-		before, err := s.draftInfo()
-		if err != nil {
-			return nil, draftMetadata{}, err
-		}
-		p, err := s.loadPolicyDraft()
-		if err != nil {
-			return nil, draftMetadata{}, err
-		}
-		after, err := s.draftInfo()
-		if err != nil {
-			return nil, draftMetadata{}, err
-		}
-		if before.Version == after.Version {
-			return p, after, nil
-		}
-	}
-	return nil, draftMetadata{}, errDraftConflict
-}
-
 func (s *state) adminLDAPSyncPreview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -577,20 +539,27 @@ func (s *state) adminLDAPSyncPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "Policy administrator role required", http.StatusForbidden)
 		return
 	}
-	p, meta, err := s.loadPolicyDraftSnapshot()
+	var request struct {
+		UsersVersion *int64 `json:"users_version"`
+	}
+	if err := decodeJSONRequest(w, r, 64<<10, &request); err != nil || request.UsersVersion == nil {
+		writeError(w, "users_version is required", http.StatusBadRequest)
+		return
+	}
+	users, usersVersion, err := s.accountCatalog()
 	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, errDraftConflict) {
-			status = http.StatusConflict
-		}
 		s.audit(actor, "ldap.sync.preview", "failed", map[string]any{"error": err.Error()})
-		writeError(w, err.Error(), status)
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if *request.UsersVersion != usersVersion {
+		writeError(w, errAccountConflict.Error(), http.StatusConflict)
 		return
 	}
 	entries, err := s.ldapUsers()
 	var preview ldapSyncPreview
 	if err == nil {
-		preview, err = calculateLDAPSyncPreview(p, entries)
+		preview, err = calculateLDAPSyncPreview(&editablePolicy{Users: users}, entries)
 	}
 	if err != nil {
 		s.audit(actor, "ldap.sync.preview", "failed", map[string]any{"error": err.Error()})
@@ -598,7 +567,7 @@ func (s *state) adminLDAPSyncPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var stored storedLDAPSyncPreview
-	stored, err = s.storeLDAPSyncPreview(actor, meta.Version, preview)
+	stored, err = s.storeLDAPSyncPreview(actor, usersVersion, preview)
 	if err != nil {
 		s.audit(actor, "ldap.sync.preview", "failed", map[string]any{"error": err.Error()})
 		writeError(w, err.Error(), http.StatusInternalServerError)
@@ -606,10 +575,10 @@ func (s *state) adminLDAPSyncPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(actor, "ldap.sync.preview", "success", map[string]any{
 		"added": preview.Added, "updated": preview.Updated, "disabled": preview.Disabled,
-		"draft_version": stored.DraftVersion, "expires_at": stored.ExpiresAt,
+		"users_version": stored.UsersVersion, "expires_at": stored.ExpiresAt,
 	})
 	writeJSON(w, map[string]any{
 		"success": true, "added": preview.Added, "updated": preview.Updated, "disabled": preview.Disabled,
-		"users": preview.Users, "preview_token": stored.Token, "draft_version": stored.DraftVersion, "expires_at": stored.ExpiresAt,
+		"users": preview.Users, "preview_token": stored.Token, "users_version": stored.UsersVersion, "expires_at": stored.ExpiresAt,
 	})
 }

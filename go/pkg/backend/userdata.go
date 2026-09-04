@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -100,16 +99,6 @@ type UserStore struct {
 
 type SSHAEncoder struct{}
 
-// Encode takes a raw password phrase as []byte input and encodes it using
-// the SSHAEncoder.
-// It returns the encoded password as a byte slice or an error if the
-// encoding fails.
-func (enc SSHAEncoder) Encode(rawPassPhrase []byte) ([]byte, error) {
-	hash := makeSHA256Hash(rawPassPhrase, makeSalt())
-	b64 := base64.StdEncoding.EncodeToString(hash)
-	return fmt.Appendf(nil, "{SSHA256}%s", b64), nil
-}
-
 func (enc SSHAEncoder) EncodeAsString(rawPassPhrase []byte) (string, error) {
 	hash := makeSHA256Hash(rawPassPhrase, makeSalt())
 	b64 := base64.StdEncoding.EncodeToString(hash)
@@ -195,12 +184,6 @@ func makeSHA256Hash(passphrase, salt []byte) []byte {
 	sha256.Write(salt)
 	h := sha256.Sum(nil)
 	return append(h, salt...)
-}
-
-// generatePassword generates a SHA256 hash of the given password
-func (u *UserStore) GenerateSaltedHashFromPassword(password string) {
-	hash := makeSHA256Hash([]byte(password), makeSalt())
-	u.Hash = hex.EncodeToString(hash[:])
 }
 
 // CheckPassword checks if the given password matches the stored hash

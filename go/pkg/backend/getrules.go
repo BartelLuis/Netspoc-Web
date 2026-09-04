@@ -21,7 +21,7 @@ func (s *state) getRules(w http.ResponseWriter, r *http.Request) {
 
 func (s *state) expandRules(r *http.Request, service string) []jsonMap {
 	rules, _ := s.getMatchingRulesAndUsers(r, service)
-	return s.adaptNameIP(r, rules)
+	return s.adaptNameIP(r, service, rules)
 }
 
 func (s *state) getMatchingRulesAndUsers(r *http.Request, service string) ([]*rule, []string) {
@@ -162,9 +162,11 @@ RULE:
 }
 
 // Substitute objects in rules by IP address or name.
-func (s *state) adaptNameIP(r *http.Request, rules []*rule) []jsonMap {
+func (s *state) adaptNameIP(r *http.Request, service string, rules []*rule) []jsonMap {
 	result := []jsonMap{}
 	history := s.getHistoryParamOrCurrentPolicy(r)
+	currentVersion := s.currentPolicy()
+	isCurrent := history != "" && history == currentVersion
 	owner := r.FormValue("active_owner")
 	dispProp := r.FormValue("display_property")
 	if dispProp == "" {
@@ -205,11 +207,26 @@ func (s *state) adaptNameIP(r *http.Request, rules []*rule) []jsonMap {
 		}
 	}
 	for _, rule := range rules {
+		sourceRefs := slices.Clone(rule.Src)
+		destinationRefs := slices.Clone(rule.Dst)
+		protocolRefs := slices.Clone(rule.Prt)
 		copy := jsonMap{
-			"action": rule.Action,
-			"src":    getVal(rule.Src),
-			"dst":    getVal(rule.Dst),
-			"prt":    rule.Prt,
+			"action":           rule.Action,
+			"policy_name":      rule.PolicyName,
+			"service":          service,
+			"active_owner":     owner,
+			"src":              getVal(rule.Src),
+			"dst":              getVal(rule.Dst),
+			"prt":              rule.Prt,
+			"stable_rule_id":   rule.StableRuleID,
+			"src_refs":         sourceRefs,
+			"dst_refs":         destinationRefs,
+			"prt_refs":         protocolRefs,
+			"source_refs":      sourceRefs,
+			"destination_refs": destinationRefs,
+			"protocol_refs":    protocolRefs,
+			"base_version":     history,
+			"current":          isCurrent,
 		}
 		copy["has_user"] = rule.HasUser
 		result = append(result, copy)

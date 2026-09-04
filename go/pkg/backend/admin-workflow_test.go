@@ -61,13 +61,17 @@ func TestPolicyPasswordIsRejectedAndNeverPersisted(t *testing.T) {
 	}
 }
 
-func workflowTestState(t *testing.T) *state {
+func workflowTestState(t *testing.T, additionalUsers ...editableUser) *state {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "policies"), 0750); err != nil {
 		t.Fatal(err)
 	}
-	return &state{config: &config{NetspocData: filepath.Join(root, "policies"), UserDir: filepath.Join(root, "users")}, cache: newCache(filepath.Join(root, "policies"), 8)}
+	s := &state{config: &config{NetspocData: filepath.Join(root, "policies"), UserDir: filepath.Join(root, "users")}, cache: newCache(filepath.Join(root, "policies"), 8)}
+	users := append([]editableUser(nil), validEditablePolicy().Users...)
+	users = append(users, additionalUsers...)
+	seedPolicyTestAccounts(t, s, users...)
+	return s
 }
 
 func TestLegacyCompiledPolicyDoesNotBlockAdministrativeBootstrap(t *testing.T) {
@@ -90,27 +94,68 @@ func TestLegacyCompiledPolicyDoesNotBlockAdministrativeBootstrap(t *testing.T) {
 	}
 }
 
-func TestRulesWithoutTargetContextCannotBeStagedOrPublished(t *testing.T) {
+func TestRulesWithoutLegacyTargetContextRemainPublishableButNotDeployable(t *testing.T) {
 	s := workflowTestState(t)
 	p := validEditablePolicy()
 	p.Tenants = nil
 	p.TargetContexts = nil
 	rule := &p.Services[0].Rules[0]
 	rule.TargetContext, rule.RuleGroup = "", ""
-	rule.StableRuleID, rule.ShortID, rule.PolicyName, rule.PolicyComment, rule.NamingVersion = "", "", "", "", ""
+	rule.StableRuleID, rule.ShortID, rule.PolicyName, rule.PolicyComment, rule.NamingVersion = "", "", "MANUAL_WEB", "", ""
 
-	if _, err := s.createPendingRevision(p, "editor@example.net", "migration", "CHG-1", nil, nil); err == nil || !strings.Contains(err.Error(), "Zielkontext") {
-		t.Fatalf("rule without target context was staged: %v", err)
+	if _, err := s.createPendingRevision(p, "editor@example.net", "migration", "CHG-1", nil, nil); err != nil {
+		t.Fatalf("manual rule without legacy target context was not staged: %v", err)
 	}
-	if err := s.publishPolicy(p); err == nil || !strings.Contains(err.Error(), "Zielkontext") {
-		t.Fatalf("rule without target context was published: %v", err)
+	plan := generateDeploymentPlan(p, nil)
+	if plan.Ready || len(plan.Commands) != 0 || len(plan.Warnings) == 0 {
+		t.Fatalf("unbound rule unexpectedly produced an executable deployment plan: %#v", plan)
 	}
-	if version, err := s.latestPublicationVersion(); err != nil || version != "" {
-		t.Fatalf("rejected publication changed immutable history: version=%q err=%v", version, err)
+	if err := s.publishPolicy(p); err != nil {
+		t.Fatalf("manual rule without legacy target context was not published: %v", err)
+	}
+	if version, err := s.latestPublicationVersion(); err != nil || version == "" {
+		t.Fatalf("publication was not recorded: version=%q err=%v", version, err)
 	}
 }
 
-func TestEditorCannotChangeUsersOrOwnerAccess(t *testing.T) {
+func TestLegacyDeploymentBaselineWithoutRuleIDsLoadsDeterministically(t *testing.T) {
+	s := workflowTestState(t)
+	p := validEditablePolicy()
+	p.Tenants = nil
+	p.TargetContexts = nil
+	rule := &p.Services[0].Rules[0]
+	rule.TargetContext, rule.StableRuleID, rule.ShortID = "", "", ""
+	rule.PolicyName, rule.PolicyComment, rule.NamingVersion = "", "", ""
+
+	const version = "p-legacy-without-rule-identities"
+	if err := s.storeRevision(version, "", p, []policyChange{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.finalizePublication(version, p, "reviewer@example.net", true); err != nil {
+		t.Fatal(err)
+	}
+
+	publication, loadedVersion, err := s.latestPublicationSnapshot()
+	if err != nil || loadedVersion != version {
+		t.Fatalf("legacy publication=%q err=%v", loadedVersion, err)
+	}
+	if got := publication.Services[0].Rules[0].StableRuleID; got != "" {
+		t.Fatalf("immutable legacy publication gained a random rule ID while loading: %q", got)
+	}
+	record, err := s.loadRevisionRecord(version, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !samePolicyDocument(publication, record.Policy) {
+		t.Fatal("byte-identical legacy publication and revision normalized differently")
+	}
+	base, plan, err := s.deploymentPlanBase(publication, version)
+	if err != nil || base != nil || plan != nil {
+		t.Fatalf("legacy baseline should safely trigger a full plan: base=%#v plan=%#v err=%v", base, plan, err)
+	}
+}
+
+func TestEditorScopeIgnoresDetachedAccountsButProtectsOwnerAccess(t *testing.T) {
 	current := validEditablePolicy()
 	next := *current
 	next.Users = append([]editableUser(nil), current.Users...)
@@ -119,8 +164,8 @@ func TestEditorCannotChangeUsersOrOwnerAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	next.Users[0].Role = "viewer"
-	if err := enforceEditorPolicyScope(current, &next); err == nil {
-		t.Fatal("editor changed a policy role")
+	if err := enforceEditorPolicyScope(current, &next); err != nil {
+		t.Fatalf("detached account catalog affected editor policy scope: %v", err)
 	}
 	next.Users = append([]editableUser(nil), current.Users...)
 	next.Owners[0].ReadAll = true
@@ -141,7 +186,7 @@ func TestPolicyRolesIncludeReviewerAndDeployer(t *testing.T) {
 }
 
 func TestAuthorizationPolicyIgnoresDraftRoleElevation(t *testing.T) {
-	s := workflowTestState(t)
+	s := workflowTestState(t, editableUser{Email: "editor@example.net", Role: "editor"})
 	published := validEditablePolicy()
 	published.Users = append(published.Users, editableUser{Email: "editor@example.net", Role: "editor"})
 	if err := s.storePublication("published-auth", published); err != nil {
@@ -470,7 +515,10 @@ func TestWhereUsedReportsRuleSide(t *testing.T) {
 }
 
 func TestAdminWhereUsedDoesNotExposeDraftToViewer(t *testing.T) {
-	s := workflowTestState(t)
+	s := workflowTestState(t,
+		editableUser{Email: "editor@example.net", Role: "editor"},
+		editableUser{Email: "viewer@example.net", Role: "viewer"},
+	)
 	published := validEditablePolicy()
 	published.Users = append(published.Users,
 		editableUser{Email: "editor@example.net", Role: "editor"},

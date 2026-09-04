@@ -23,9 +23,6 @@ my %conf_keys = (
           ldap_filter_template ldap_email_attr business_units
         ) ),
     mail_template       => "$base_dir/mail",
-    html_template       => "$base_dir/html",
-    template_path       => "$base_dir/templates",
-    about_info_template => "$base_dir/html/about_info",
     sendmail_command    => '/usr/lib/sendmail',
     expire_logged_in    => 480,
 );

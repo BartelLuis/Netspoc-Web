@@ -140,7 +140,9 @@ func TestPublicBaseURLRejectsUnsafeOrigins(t *testing.T) {
 }
 
 func TestLocalPasswordIdentityUsesPublishedPolicy(t *testing.T) {
-	s := workflowTestState(t)
+	s := workflowTestState(t, editableUser{
+		Email: "directory@example.test", Role: "viewer", Source: "ldap", DirectoryID: "ldap-1", Username: "directory", Active: true,
+	})
 	published := validEditablePolicy()
 	published.Users = append(published.Users, editableUser{
 		Email: "directory@example.test", Role: "viewer", Source: "ldap", DirectoryID: "ldap-1", Username: "directory", Active: true,
@@ -192,6 +194,12 @@ func TestVerifyGETOnlyShowsConfirmationAndPOSTStoresPassword(t *testing.T) {
 			HTMLTemplate: templateDir,
 		},
 		cache: newCache(policyDir, 8),
+	}
+	accountPolicy := validEditablePolicy()
+	accountPolicy.Users = append(accountPolicy.Users, editableUser{Email: "local@example.test", Role: "viewer", Source: "local", Active: true})
+	seedPolicyTestAccounts(t, s, accountPolicy.Users...)
+	if err := s.storePublication("registration-account-base", accountPolicy); err != nil {
+		t.Fatal(err)
 	}
 	// The production "current" path is a symlink to a p... version. Windows
 	// test runners commonly lack symlink privileges, so seed the resolved cache

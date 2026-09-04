@@ -29,10 +29,10 @@ function transferContext() {
   const targetDetails = { open: false };
   const target = { dataset: { serviceEditorId: '2' }, nameField: { value: '120-OK-Verkehr' }, targetList, targetDetails };
   const select = { value: '2' };
-  const rule = { select };
+  const rule = { select, dataset: { stable_rule_id: 'old' }, policyName: 'KEEP-ME' };
   const calls = { adds: [], messages: [] };
   const context = {
-    derivedRuleFields: ['stable_rule_id', 'short_id', 'policy_name', 'policy_comment', 'naming_version'],
+    serverRuleFields: ['stable_rule_id', 'short_id', 'policy_comment', 'naming_version'],
     $: (selector, root) => {
       if (selector === '.rule-target-service' && root === rule) return select;
       if (selector === '[data-field=name]' && root === target) return target.nameField;
@@ -41,12 +41,11 @@ function transferContext() {
       throw new Error(`Unexpected selector ${selector}`);
     },
     $$: selector => selector === '.service' ? [current, target] : [],
-    values: () => ({ action: 'permit', sources: ['network:a'], stable_rule_id: 'old', short_id: 'ABCDE', policy_name: 'old-name' }),
+    values: () => ({ action: 'permit', sources: ['network:a'], stable_rule_id: 'old', short_id: 'ABCDE', policy_name: 'old-name', policy_comment: 'old comment', naming_version: 'v1', target_context: 'prod-vdom', rule_group: 'TMP', expires_at: '2030-01-01' }),
     add: (type, data) => calls.adds.push({ type, data }),
     message: (text, error = false) => calls.messages.push({ text, error }),
     refreshRuleServiceTargets: () => {},
     updateRuleCounts: () => {},
-    schedulePolicyNamePreview: () => {},
   };
   vm.createContext(context);
   vm.runInContext(functionSource('transferRule'), context);
@@ -65,6 +64,11 @@ test('copying creates an independent rule in the selected service', () => {
   assert.equal(calls.adds[0].data.stable_rule_id, undefined);
   assert.equal(calls.adds[0].data.short_id, undefined);
   assert.equal(calls.adds[0].data.policy_name, undefined);
+  assert.equal(calls.adds[0].data.policy_comment, undefined);
+  assert.equal(calls.adds[0].data.naming_version, undefined);
+  assert.equal(calls.adds[0].data.target_context, 'prod-vdom');
+  assert.equal(calls.adds[0].data.rule_group, 'TMP');
+  assert.equal(calls.adds[0].data.expires_at, '2030-01-01');
 });
 
 test('moving reuses the rule row and opens the selected service', () => {
@@ -73,4 +77,6 @@ test('moving reuses the rule row and opens the selected service', () => {
   assert.equal(target.targetList.appended, rule);
   assert.equal(target.targetDetails.open, true);
   assert.equal(calls.adds.length, 0);
+  assert.equal(rule.policyName, 'KEEP-ME');
+  assert.equal(rule.dataset.stable_rule_id, 'old');
 });

@@ -369,39 +369,15 @@ func (s *state) getTemplateContent(templatePath string, data map[string]string) 
 }
 
 func (s *state) checkEmailAuthorization(email string) error {
-	owners := s.findAuthorizedOwners(email)
-	if len(owners) == 0 {
-		return fmt.Errorf("email %s is not authorized", email)
+	if _, active := s.activeAccount(email); active {
+		return nil
 	}
-	return nil
-}
-
-func localPasswordIdentityAllowed(p *editablePolicy, email string) bool {
-	if p == nil {
-		return false
-	}
-	for _, user := range p.Users {
-		if strings.EqualFold(strings.TrimSpace(user.Email), email) {
-			return !strings.EqualFold(strings.TrimSpace(user.Source), "ldap")
-		}
-	}
-	// Legacy local accounts may be authorized by the generated email mapping
-	// without having been migrated into the editable user catalog yet.
-	return true
+	return fmt.Errorf("email %s is not authorized", email)
 }
 
 func (s *state) localPasswordIdentityAllowed(email string) bool {
-	p, version, err := s.latestPublicationSnapshot()
-	if err != nil {
-		return false
-	}
-	if version == "" {
-		p, err = s.loadPolicyDraft()
-		if err != nil {
-			return false
-		}
-	}
-	return localPasswordIdentityAllowed(p, email)
+	user, active := s.activeAccount(email)
+	return active && user.Source == "local"
 }
 
 const (

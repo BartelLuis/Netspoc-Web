@@ -18,6 +18,7 @@ func collectorPolicy() *editablePolicy {
 		TargetContexts: []targetContext{{Name: "prod", ContextType: "dedicated", AssignedMKZ: "M120"}},
 		Users: []editableUser{
 			{Email: "root@example.net", Role: "admin"},
+			{Email: "developer@example.net", Role: policyDeveloperRole},
 			{Email: "noc@example.net", Role: "viewer"},
 			{Email: "multi@example.net", Role: "viewer"},
 			{Email: "scope@example.net", Role: "viewer"},
@@ -66,6 +67,7 @@ func collectorService(name, owner, network, host, protocol string) editableServi
 		Name: name, Owners: []string{owner},
 		Rules: []editableRule{{
 			Action:          "permit",
+			PolicyName:      strings.ToUpper(strings.ReplaceAll(name, "-", "_")),
 			Sources:         []string{"network:" + network},
 			Destinations:    []string{"host:" + host},
 			Protocols:       []string{protocol},
@@ -90,6 +92,7 @@ func ownerAccessFixture(t *testing.T) *state {
 		},
 		cache: newCache(filepath.Join(root, "policies"), 8),
 	}
+	seedPolicyTestAccounts(t, s, p.Users...)
 	if err := validateEditablePolicy(p); err != nil {
 		t.Fatal(err)
 	}
@@ -284,6 +287,17 @@ func TestReadAllCollectorIsDefaultForUserWithMultipleOwners(t *testing.T) {
 	if recorder.Code != http.StatusOK || session.Get("owner") != "NOC" {
 		t.Fatalf("default owner = %v, want NOC; status=%d body=%s",
 			session.Get("owner"), recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestDeveloperCanAccessEveryOwnerWithoutMembership(t *testing.T) {
+	s := ownerAccessFixture(t)
+	want := []string{"BRANCH", "FB1", "FB2", "FOREIGN", "NOC", "REGION", "ROOT", "SCOPE"}
+	if got := s.findAuthorizedOwners(" DEVELOPER@example.net "); !slices.Equal(got, want) {
+		t.Fatalf("developer owner authorization = %#v, want %#v", got, want)
+	}
+	if err := s.checkEmailAuthorization("developer@example.net"); err != nil {
+		t.Fatalf("unassigned developer cannot log in: %v", err)
 	}
 }
 

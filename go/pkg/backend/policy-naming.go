@@ -3,6 +3,7 @@ package backend
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -61,6 +62,95 @@ func protectRuleIdentities(current, next *editablePolicy) {
 			rule.NamingVersion = ""
 		}
 	}
+}
+
+// protectManualRuleIdentities keeps the immutable part of a rule identity
+// server-owned while deliberately leaving PolicyName under editor control.
+// Legacy naming metadata is preserved for existing rules so an upgrade does
+// not rewrite already published policy comments or identifiers. A copied or
+// forged stable ID is discarded and regenerated during validation.
+func protectManualRuleIdentities(current, next *editablePolicy) {
+	existing := map[string]editableRule{}
+	if current != nil {
+		for _, service := range current.Services {
+			for _, rule := range service.Rules {
+				if stableIDRE.MatchString(rule.StableRuleID) {
+					existing[rule.StableRuleID] = rule
+				}
+			}
+		}
+	}
+	for si := range next.Services {
+		for ri := range next.Services[si].Rules {
+			rule := &next.Services[si].Rules[ri]
+			if old, ok := existing[rule.StableRuleID]; ok {
+				rule.StableRuleID = old.StableRuleID
+				rule.ShortID = old.ShortID
+				rule.PolicyComment = old.PolicyComment
+				rule.NamingVersion = old.NamingVersion
+				continue
+			}
+			rule.StableRuleID = ""
+			rule.ShortID = ""
+			rule.PolicyComment = ""
+			rule.NamingVersion = ""
+		}
+	}
+}
+
+// prepareManualPolicyNames validates names exactly as they will be sent to
+// FortiOS. TargetContext remains an internal deployment binding for existing
+// installations; it is no longer an input to name generation or a user-facing
+// field. Stable IDs and their compact short IDs remain server-owned.
+func prepareManualPolicyNames(p *editablePolicy) error {
+	if p == nil {
+		return errors.New("policy is missing")
+	}
+	usedIDs := map[string]string{}
+	seenStableIDs := map[string]bool{}
+	usedNames := map[string]string{}
+	for si := range p.Services {
+		service := &p.Services[si]
+		for ri := range service.Rules {
+			rule := &service.Rules[ri]
+			rule.PolicyName = strings.TrimSpace(rule.PolicyName)
+			if !manualPolicyNameRE.MatchString(rule.PolicyName) {
+				return fmt.Errorf("Dienst %q: Regelname ist erforderlich und darf maximal 35 Zeichen aus Buchstaben, Ziffern, '_' und '-' enthalten", service.Name)
+			}
+			if !stableIDRE.MatchString(rule.StableRuleID) {
+				rule.StableRuleID = newStableRuleID()
+				rule.ShortID = ""
+			}
+			if seenStableIDs[rule.StableRuleID] {
+				return fmt.Errorf("die stabile Regel-ID %q wird mehrfach verwendet", rule.StableRuleID)
+			}
+			seenStableIDs[rule.StableRuleID] = true
+
+			scope := strings.TrimSpace(rule.TargetContext)
+			shortKey := func(shortID string) string { return scope + "\x00" + shortID }
+			if !shortIDRE.MatchString(rule.ShortID) || (usedIDs[shortKey(rule.ShortID)] != "" && usedIDs[shortKey(rule.ShortID)] != rule.StableRuleID) {
+				for attempt := 0; ; attempt++ {
+					candidate := shortIDCandidate(rule.StableRuleID, attempt)
+					key := shortKey(candidate)
+					if usedIDs[key] == "" || usedIDs[key] == rule.StableRuleID {
+						rule.ShortID = candidate
+						break
+					}
+				}
+			}
+			usedIDs[shortKey(rule.ShortID)] = rule.StableRuleID
+
+			nameKey := scope + "\x00" + strings.ToLower(rule.PolicyName)
+			if prior := usedNames[nameKey]; prior != "" && prior != rule.StableRuleID {
+				if scope == "" {
+					return fmt.Errorf("Regelname %q ist bereits vergeben", rule.PolicyName)
+				}
+				return fmt.Errorf("Regelname %q ist in der internen Deployment-Zuordnung %q bereits vergeben", rule.PolicyName, scope)
+			}
+			usedNames[nameKey] = rule.StableRuleID
+		}
+	}
+	return nil
 }
 
 type ruleNamingInputs struct {
@@ -331,6 +421,7 @@ var (
 	mkzRE               = regexp.MustCompile(`^M(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2})$`)
 	shortIDRE           = regexp.MustCompile(`^[0-9A-F]{5}$`)
 	policyNameAllowedRE = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+	manualPolicyNameRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,34}$`)
 	stableIDRE          = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
 	catalogVersionRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,31}$`)
 	catalogCodeRE       = regexp.MustCompile(`^[A-Za-z0-9]+$`)

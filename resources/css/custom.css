@@ -91,6 +91,8 @@ table.smaller-font { font-size : small; }
 	height: 1%;
 }
 
-.pw-admin-frame {
+.pw-admin-frame,
+.pw-devices-frame,
+.pw-requests-frame {
 	background: #f4f7fa;
 }

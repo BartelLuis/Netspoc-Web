@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	pathpkg "path"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,8 +63,6 @@ type deploymentObject struct {
 	payload map[string]any
 	cli     []string
 }
-
-var fortinetNamePartRE = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 
 const supportedFortiOSRelease = "7.4.x"
 const fortiOSExecutionModelVersion = "fortios-7.4-prepare-disabled-deny-first-v1"
@@ -128,12 +125,9 @@ func generateDeploymentPlanWithBase(previous, p *editablePolicy, configured []Fo
 			continue
 		}
 		rules := byContext[contextName]
-		sort.SliceStable(rules, func(i, j int) bool {
-			if rules[i].rule.PolicyName == rules[j].rule.PolicyName {
-				return rules[i].service < rules[j].service
-			}
-			return rules[i].rule.PolicyName < rules[j].rule.PolicyName
-		})
+		// Preserve the reviewed service/rule order. Policy names are editable;
+		// sorting by them would make a harmless rename silently change firewall
+		// evaluation order.
 		for _, target := range targets {
 			scope := target.VDOM
 			if target.Type == "fortimanager" {
@@ -142,6 +136,10 @@ func generateDeploymentPlanWithBase(previous, p *editablePolicy, configured []Fo
 			appendDeploymentTargetSummary(&plan, target, contextName, scope)
 			for _, item := range rules {
 				rule := item.rule
+				if anchor := strings.TrimSpace(target.PolicyInsertBefore); anchor != "" && strings.EqualFold(rule.PolicyName, anchor) {
+					plan.Errors = append(plan.Errors, fmt.Sprintf("%s/%s auf Ziel %q: Der Regelname kollidiert mit dem konfigurierten Policy-Anker.", item.service, rule.PolicyName, target.Name))
+					continue
+				}
 				addressFamily, familyErr := deploymentAddressFamily(rule, objects)
 				if familyErr != nil {
 					plan.Errors = append(plan.Errors, fmt.Sprintf("%s/%s: %v", item.service, rule.PolicyName, familyErr))
@@ -591,7 +589,7 @@ func (p *deploymentPlan) finish() {
 		if name == "" {
 			continue
 		}
-		key := command.Target + "\x00" + command.Path + "\x00" + name
+		key := command.Target + "\x00" + command.Path + "\x00" + strings.ToLower(name)
 		operation := strings.ToUpper(command.Method)
 		if previous, exists := seen[key]; exists && !(command.Kind == "policy" && previous == "DELETE" && operation == "UPSERT") {
 			p.Errors = append(p.Errors, fmt.Sprintf("Deployment-Objekt %q ist für Ziel %q widersprüchlich (%s und %s).", name, command.Target, previous, operation))
@@ -1094,8 +1092,4 @@ func fortinetQuote(value string) string {
 	value = strings.ReplaceAll(value, "\r", " ")
 	value = strings.ReplaceAll(value, "\n", " ")
 	return "\"" + value + "\""
-}
-
-func safeFortinetNamePart(value string) string {
-	return strings.Trim(fortinetNamePartRE.ReplaceAllString(value, "_"), "_")
 }

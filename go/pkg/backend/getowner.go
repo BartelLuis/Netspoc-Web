@@ -83,10 +83,22 @@ func (s *state) getOwner(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *state) findAuthorizedOwners(email string) []string {
-	m := s.loadEmail2Owners()
+	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
 		return []string{}
 	}
+	policy := s.authorizationPolicy()
+	if isPolicyDeveloper(policy, email) {
+		result := make([]string, 0, len(policy.Owners))
+		for _, owner := range policy.Owners {
+			if name := strings.TrimSpace(owner.Name); name != "" {
+				result = append(result, name)
+			}
+		}
+		slices.Sort(result)
+		return slices.Compact(result)
+	}
+	m := s.loadEmail2Owners()
 	_, dom, _ := strings.Cut(email, "@")
 	wildcard := "[all]@" + dom
 	result := slices.Concat(m[wildcard], m[email])

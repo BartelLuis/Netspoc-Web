@@ -65,12 +65,15 @@ type service struct {
 	Rules []*rule
 }
 type rule struct {
-	Service string   `json:"service,omitempty"` // Needed for grouping in frontend.
-	HasUser string   `json:"has_user"`
-	Action  string   `json:"action"`
-	Src     []string `json:"src"`
-	Dst     []string `json:"dst"`
-	Prt     []string `json:"prt"`
+	Service       string   `json:"service,omitempty"` // Needed for grouping in frontend.
+	HasUser       string   `json:"has_user"`
+	Action        string   `json:"action"`
+	Src           []string `json:"src"`
+	Dst           []string `json:"dst"`
+	Prt           []string `json:"prt"`
+	StableRuleID  string   `json:"stable_rule_id,omitempty"`
+	PolicyName    string   `json:"policy_name,omitempty"`
+	TargetContext string   `json:"target_context,omitempty"`
 }
 type ownerData struct {
 	assets   *assets

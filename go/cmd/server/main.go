@@ -15,13 +15,11 @@ func main() {
 		panic("LISTENPORT must be set")
 	}
 	listen := os.Getenv("LISTENADDRESS") + ":" + port
-	handler := backend.MainHandler()
+	var handler http.Handler
 	if staticDir := os.Getenv("STATIC_DIR"); staticDir != "" {
-		mux := http.NewServeMux()
-		mux.Handle("/backend/", http.StripPrefix("/backend", handler))
-		mux.Handle("/backend6/", http.StripPrefix("/backend6", handler))
-		mux.Handle("/", spaFiles(staticDir))
-		handler = mux
+		handler = backend.MainHandlerWithStatic(spaFiles(staticDir))
+	} else {
+		handler = backend.MainHandler()
 	}
 	log.Printf("Listening on %s", listen)
 	log.Fatal(http.ListenAndServe(listen, handler))
