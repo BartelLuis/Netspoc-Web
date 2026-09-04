@@ -42,7 +42,6 @@ type fakeFortiGate struct {
 	pageSize             int
 	revision             string
 	revisionAfterFirst   string
-	emptyPageStart       int
 	repeatFirstPage      bool
 	replaceAfterMutation string
 	replaceName          string
@@ -51,7 +50,7 @@ type fakeFortiGate struct {
 
 func newFakeFortiGate(version string) *fakeFortiGate {
 	return &fakeFortiGate{
-		version: version, build: 2902, nextPolicy: 100, revision: "fake-revision-1", emptyPageStart: -1,
+		version: version, build: 2902, nextPolicy: 100, revision: "fake-revision-1",
 		objects: map[string][]map[string]any{
 			"/api/v2/cmdb/firewall/address":        {},
 			"/api/v2/cmdb/firewall/address6":       {},
@@ -107,6 +106,9 @@ func (f *fakeFortiGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			limitReached = end < len(results)
 			nextIndex = end - 1
 			results = results[start:end]
+		} else if f.pageSize > 0 {
+			results = []map[string]any{}
+			limitReached = false
 		}
 		if f.repeatFirstPage && start > 0 && f.pageSize > 0 {
 			first := f.filteredObjects(collection, "", r.URL.Query().Get("filter"))
@@ -116,11 +118,6 @@ func (f *fakeFortiGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			results = first[:end]
 			limitReached = false
-		}
-		if start == f.emptyPageStart {
-			results = []map[string]any{}
-			limitReached = true
-			nextIndex = start
 		}
 		revision := f.revision
 		if start > 0 && f.revisionAfterFirst != "" {
@@ -449,7 +446,6 @@ func TestFortiGateObjectListingFailsClosedOnUnstableOrMalformedPages(t *testing.
 	}{
 		{name: "revision changes", want: "changed while", configure: func(fake *fakeFortiGate) { fake.revisionAfterFirst = "fake-revision-2" }},
 		{name: "duplicate mkey", want: "repeats mkey", configure: func(fake *fakeFortiGate) { fake.repeatFirstPage = true }},
-		{name: "empty limited page", want: "empty limited page", configure: func(fake *fakeFortiGate) { fake.emptyPageStart = 2 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fake := newFakeFortiGate("v7.4.12")

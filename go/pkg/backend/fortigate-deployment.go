@@ -1672,9 +1672,6 @@ func listFortiGateObjects(ctx context.Context, client *http.Client, target Forti
 		if err != nil {
 			return nil, fmt.Errorf("FortiGate object response has malformed results: %w", err)
 		}
-		if fortiGateTruthy(body["limit_reached"]) && len(values) == 0 {
-			return nil, errors.New("FortiGate paginated response returned an empty limited page")
-		}
 		for _, value := range values {
 			mkey := firstScalarString(value, "name")
 			if policyKind {
@@ -1698,6 +1695,9 @@ func listFortiGateObjects(ctx context.Context, client *http.Client, target Forti
 		if revision == "" {
 			return nil, errors.New("FortiGate paginated response has no stable revision")
 		}
+		// next_idx tracks the last scanned CMDB table position, not the number
+		// of visible results. FortiOS can therefore return an empty page when
+		// filtering or permissions hide every object in that scan window.
 		nextIndex, err := strconv.Atoi(scalarString(body["next_idx"]))
 		if err != nil || nextIndex < start || nextIndex+1 <= start {
 			return nil, errors.New("FortiGate paginated response has an invalid next_idx")

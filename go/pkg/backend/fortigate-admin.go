@@ -301,7 +301,7 @@ func discoverFortiGateVDOMs(ctx context.Context, client *http.Client, target For
 		vdoms = append(vdoms, name)
 	}
 	if len(vdoms) == 0 {
-		return nil, errors.New("FortiGate returned no VDOMs")
+		return nil, errors.New("FortiGate returned no visible VDOMs; check the API administrator's VDOM assignments and system read permission")
 	}
 	sort.Slice(vdoms, func(i, j int) bool { return strings.ToLower(vdoms[i]) < strings.ToLower(vdoms[j]) })
 	return vdoms, nil

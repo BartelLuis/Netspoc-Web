@@ -59,6 +59,59 @@ func TestDiscoverFortiGateVDOMsPaginatesBeyondOneHundred(t *testing.T) {
 	}
 }
 
+func TestDiscoverFortiGateVDOMsContinuesAcrossEmptyLimitedPage(t *testing.T) {
+	const token = "vdom-discovery-token"
+	starts := []string{}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/cmdb/system/vdom" || r.Header.Get("Authorization") != "Bearer "+token {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		start := r.URL.Query().Get("start")
+		starts = append(starts, start)
+		response := map[string]any{
+			"status": "success", "http_status": 200, "revision": "stable-vdom-revision",
+		}
+		switch start {
+		case "0":
+			response["results"] = []map[string]any{{"name": "root"}}
+			response["limit_reached"] = true
+			response["next_idx"] = 0
+		case "1":
+			response["results"] = []map[string]any{}
+			response["limit_reached"] = true
+			response["next_idx"] = 1
+		case "2":
+			response["results"] = []map[string]any{{"name": "tenant"}}
+			response["limit_reached"] = false
+		default:
+			http.Error(w, "unexpected pagination offset", http.StatusBadRequest)
+			return
+		}
+		writeFakeFortiGate(w, response)
+	}))
+	defer server.Close()
+	target := FortinetTarget{
+		Name: "scan", Type: "fortigate", URL: server.URL, TokenEnv: "managed:scan",
+		managedToken: token,
+		managedCAPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})),
+	}
+	client, err := target.httpClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vdoms, err := discoverFortiGateVDOMs(context.Background(), client, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(vdoms, []string{"root", "tenant"}) {
+		t.Fatalf("discovered VDOMs = %v", vdoms)
+	}
+	if !reflect.DeepEqual(starts, []string{"0", "1", "2"}) {
+		t.Fatalf("pagination starts = %v", starts)
+	}
+}
+
 type managedFortiGateAPIResponse struct {
 	Success    bool                   `json:"success"`
 	Record     managedFortiGateView   `json:"record"`
