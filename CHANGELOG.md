@@ -48,9 +48,9 @@ Versionsnummer und Datum.
 
 ### Behoben
 
-- Die FortiGate-Paginierung folgt auch nach leeren, limitierten Antwortfenstern
-  dem `next_idx`, sodass die VDOM-Erkennung bei eingeschränkter Sichtbarkeit
-  nicht vorzeitig abbricht.
+- Die FortiGate-Paginierung nutzt bei aktuellen FortiOS-Antworten die gemeldete
+  CMDB-Tabellengröße und feste `start`-/`count`-Fenster; `next_idx` bleibt nur
+  als Fallback für alte Antworten ohne `size` erhalten.
 - Dienstregeldetails zeigen wieder die tatsächlich gespeicherten Quellen und
   Ziele; NAT-Darstellung mutiert keine gecachten Objekte mehr.
 - Session-Fixation, unsichere Benutzerdateipfade und implizite Kontoerstellung

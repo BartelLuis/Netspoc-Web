@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -435,6 +436,115 @@ func TestFortiGateObjectListingPaginatesWithNextIndexPlusOne(t *testing.T) {
 	}
 	if strings.Join(starts, ",") != "0,2" {
 		t.Fatalf("pagination starts = %v, want next_idx+1 => [0 2]", starts)
+	}
+}
+
+func TestFortiGateObjectListingUsesSizeWhenCountTruncatesWithoutLimitFlag(t *testing.T) {
+	t.Setenv("FGT_RUNTIME_TOKEN", "runtime-secret")
+	const total = 501
+	starts := []int{}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/cmdb/firewall/address" || r.URL.Query().Get("count") != "500" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		start, err := strconv.Atoi(r.URL.Query().Get("start"))
+		if err != nil || start < 0 || start > total {
+			http.Error(w, "invalid start", http.StatusBadRequest)
+			return
+		}
+		starts = append(starts, start)
+		end := start + 500
+		if end > total {
+			end = total
+		}
+		results := make([]map[string]any, 0, end-start)
+		for index := start; index < end; index++ {
+			results = append(results, map[string]any{"name": fmt.Sprintf("address-%03d", index)})
+		}
+		writeFakeFortiGate(w, map[string]any{
+			"status": "success", "http_status": 200, "revision": "stable-size-revision",
+			"size": total, "matched_count": len(results), "results": results,
+			"limit_reached": false, "next_idx": "not-a-cursor",
+		})
+	}))
+	defer server.Close()
+
+	objects, err := listFortiGateObjects(context.Background(), server.Client(), runtimeTestTarget(t, server), "/api/v2/cmdb/firewall/address", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != total || objects[0].MKey != "address-000" || objects[total-1].MKey != "address-500" {
+		t.Fatalf("sized pagination returned %d objects", len(objects))
+	}
+	if !reflect.DeepEqual(starts, []int{0, 500}) {
+		t.Fatalf("pagination starts = %v, want [0 500]", starts)
+	}
+}
+
+func TestFortiGateObjectListingTrustsCompleteSizeOverInvalidLimitCursor(t *testing.T) {
+	t.Setenv("FGT_RUNTIME_TOKEN", "runtime-secret")
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		writeFakeFortiGate(w, map[string]any{
+			"status": "success", "http_status": 200, "revision": "stable-size-revision",
+			"size": 2, "matched_count": 2,
+			"results":       []map[string]any{{"name": "root"}, {"name": "tenant"}},
+			"limit_reached": true,
+		})
+	}))
+	defer server.Close()
+
+	objects, err := listFortiGateObjects(context.Background(), server.Client(), runtimeTestTarget(t, server), "/api/v2/cmdb/firewall/address", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 2 || requests != 1 {
+		t.Fatalf("complete sized response returned %d objects after %d requests", len(objects), requests)
+	}
+}
+
+func TestFortiGateObjectListingUsesSizedPhysicalWindowsAcrossFilteredGaps(t *testing.T) {
+	t.Setenv("FGT_RUNTIME_TOKEN", "runtime-secret")
+	starts := []int{}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start, err := strconv.Atoi(r.URL.Query().Get("start"))
+		if err != nil || r.URL.Query().Get("count") != "500" || r.URL.Query().Get("filter") != "name==wanted" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		starts = append(starts, start)
+		var results []map[string]any
+		switch start {
+		case 0:
+			results = []map[string]any{{"name": "first-visible"}}
+		case 500:
+			results = []map[string]any{}
+		case 1000:
+			results = []map[string]any{{"name": "last-visible"}}
+		default:
+			http.Error(w, "unexpected start", http.StatusBadRequest)
+			return
+		}
+		writeFakeFortiGate(w, map[string]any{
+			"status": "success", "http_status": 200, "revision": "stable-size-revision",
+			"size": 1001, "matched_count": len(results), "results": results,
+			"limit_reached": true, "next_idx": "not-a-cursor",
+		})
+	}))
+	defer server.Close()
+
+	query := url.Values{"filter": []string{"name==wanted"}}
+	objects, err := listFortiGateObjects(context.Background(), server.Client(), runtimeTestTarget(t, server), "/api/v2/cmdb/firewall/address", query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 2 || objects[0].MKey != "first-visible" || objects[1].MKey != "last-visible" {
+		t.Fatalf("sparse sized pagination returned %#v", objects)
+	}
+	if !reflect.DeepEqual(starts, []int{0, 500, 1000}) {
+		t.Fatalf("pagination starts = %v, want [0 500 1000]", starts)
 	}
 }
 

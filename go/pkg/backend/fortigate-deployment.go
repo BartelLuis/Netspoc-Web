@@ -1643,6 +1643,8 @@ func listFortiGateObjects(ctx context.Context, client *http.Client, target Forti
 	seenMKeys := map[string]bool{}
 	start := 0
 	revision := ""
+	tableSize := -1
+	sizedResponse := false
 	policyKind := strings.HasSuffix(path, "/policy")
 	for page := 0; page < 10000; page++ {
 		pageQuery := url.Values{}
@@ -1672,6 +1674,22 @@ func listFortiGateObjects(ctx context.Context, client *http.Client, target Forti
 		if err != nil {
 			return nil, fmt.Errorf("FortiGate object response has malformed results: %w", err)
 		}
+		rawSize, sizePresent := body["size"]
+		if page == 0 {
+			sizedResponse = sizePresent
+		} else if sizePresent != sizedResponse {
+			return nil, errors.New("FortiGate object response changed its size metadata while a paginated snapshot was read")
+		}
+		if sizePresent {
+			pageSizeValue, sizeErr := strconv.Atoi(strings.TrimSpace(scalarString(rawSize)))
+			if sizeErr != nil || pageSizeValue < 0 || pageSizeValue > maxRows {
+				return nil, errors.New("FortiGate object response has an invalid size")
+			}
+			if tableSize >= 0 && pageSizeValue != tableSize {
+				return nil, errors.New("FortiGate object table size changed while a paginated snapshot was read")
+			}
+			tableSize = pageSizeValue
+		}
 		for _, value := range values {
 			mkey := firstScalarString(value, "name")
 			if policyKind {
@@ -1689,20 +1707,37 @@ func listFortiGateObjects(ctx context.Context, client *http.Client, target Forti
 				return nil, fmt.Errorf("FortiGate object table exceeds the safety limit of %d rows", maxRows)
 			}
 		}
+		if sizedResponse {
+			if len(result) > tableSize {
+				return nil, errors.New("FortiGate object response contains more rows than its reported size")
+			}
+			if len(result) == tableSize {
+				return result, nil
+			}
+			if start+pageSize >= tableSize {
+				return result, nil
+			}
+			if revision == "" {
+				return nil, errors.New("FortiGate paginated response has no stable revision")
+			}
+			// FortiOS 7.4 does not reliably describe explicit count windows with
+			// limit_reached or next_idx. Its size and start/count values describe
+			// the physical CMDB table, including windows hidden by filters or RBAC.
+			start += pageSize
+			continue
+		}
 		if !fortiGateTruthy(body["limit_reached"]) {
 			return result, nil
 		}
 		if revision == "" {
 			return nil, errors.New("FortiGate paginated response has no stable revision")
 		}
-		// next_idx tracks the last scanned CMDB table position, not the number
-		// of visible results. FortiOS can therefore return an empty page when
-		// filtering or permissions hide every object in that scan window.
 		nextIndex, err := strconv.Atoi(scalarString(body["next_idx"]))
 		if err != nil || nextIndex < start || nextIndex+1 <= start {
-			return nil, errors.New("FortiGate paginated response has an invalid next_idx")
+			return nil, fmt.Errorf("FortiGate paginated response has an invalid next_idx (start=%d, next_idx=%q, size=%d, results=%d)", start, scalarString(body["next_idx"]), tableSize, len(values))
 		}
-		// FortiOS next_idx is the zero-based index of the last returned row.
+		// Legacy FortiOS responses without size use next_idx as the last
+		// physical table position scanned by the shortened window.
 		start = nextIndex + 1
 	}
 	return nil, errors.New("FortiGate pagination exceeded the safety page limit")
